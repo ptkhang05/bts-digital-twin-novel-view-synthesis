@@ -39,9 +39,18 @@ def test_create_submission_zip_strict_contest_accepts_phase1_upper_range(tmp_pat
     assert result.image_count == 65
 
 
+def test_create_submission_zip_strict_contest_accepts_observed_phase1_private_minimum(tmp_path: Path):
+    submission = tmp_path / "submission"
+    _write_scene_outputs(submission, "scene_001", 26)
+
+    result = create_submission_zip(submission, tmp_path / "submission.zip")
+
+    assert result.image_count == 26
+
+
 def test_create_submission_zip_strict_contest_rejects_scene_with_too_few_phase1_targets(tmp_path: Path):
     submission = tmp_path / "submission"
-    _write_scene_outputs(submission, "scene_001", 39)
+    _write_scene_outputs(submission, "scene_001", 19)
 
-    with pytest.raises(DataValidationError, match="40-70"):
+    with pytest.raises(DataValidationError, match="20-70"):
         create_submission_zip(submission, tmp_path / "submission.zip")

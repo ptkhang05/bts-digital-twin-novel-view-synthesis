@@ -104,7 +104,7 @@ def test_prepare_scene_strict_contest_rejects_too_few_phase1_training_images(tmp
     scene = tmp_path / "raw"
     _write_minimal_scene(scene)
 
-    with pytest.raises(DataValidationError, match="150-300"):
+    with pytest.raises(DataValidationError, match="100-300"):
         prepare_scene(scene=scene, output=tmp_path / "processed", strict_contest=True)
 
 

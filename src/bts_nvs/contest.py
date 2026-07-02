@@ -42,7 +42,7 @@ PHASES = (
 
 RULES = {
     "overview": ContestRules("overview", "general problem statement", 100, 300, 20, 50),
-    "phase1": ContestRules("phase1", "round 1", 150, 300, 40, 70),
+    "phase1": ContestRules("phase1", "round 1 observed data", 100, 300, 20, 70),
 }
 RULE_ALIASES = {
     "1": "phase1",

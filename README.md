@@ -8,12 +8,15 @@ sequences, evaluates predictions against holdout ground truth when available,
 and packages multi-scene predictions into a ZIP submission.
 
 The general public problem statement says each scene contains 100-300 RGB images
-with camera intrinsics/poses and 20-50 target views. The round 1 brief is more
-specific: 150-300 train images and 40-70 target views. The released phase1 data
-uses COLMAP sparse reconstructions under `train/sparse/0` and target poses under
-`test/test_poses.csv`. Public phase metadata lists `FILE_ZIP` submissions on
-`GPU` workers. The BTC PDF briefs specify a ZIP submission containing rendered
-PNG files grouped by scene, so this project packages predictions as
+with camera intrinsics/poses and 20-50 target views. The round 1 brief says
+150-300 train images and 40-70 target views, but the released `private_set1`
+contains a scene with 103 train images and 26 target views. To avoid rejecting
+official BTC-provided data, this project validates phase1 with the observed
+safe envelope: 100-300 train images and 20-70 target views. The released phase1
+data uses COLMAP sparse reconstructions under `train/sparse/0` and target poses
+under `test/test_poses.csv`. Public phase metadata lists `FILE_ZIP` submissions
+on `GPU` workers. The BTC PDF briefs specify a ZIP submission containing
+rendered PNG files grouped by scene, so this project packages predictions as
 `scene_id/*.png`.
 
 Source: https://competition.viettel.vn/contests/var-2026
@@ -47,7 +50,8 @@ it to the processed scene. For VAI phase1 scenes, `prepare` converts
 `test/test_poses.csv` into `target_cameras.json`. Use `--strict-contest` with
 `--contest-phase` to enforce a known BTC rule set:
 
-- `phase1`: 150-300 training images, 40-70 target cameras.
+- `phase1`: 100-300 training images, 20-70 target cameras. This matches the
+  observed public/private phase1 data currently present in `VAI_NVS_DATA`.
 - `overview`: 100-300 training images, 20-50 target cameras.
 
 ## Commands
@@ -59,6 +63,14 @@ python -m bts_nvs.train --scene processed_scene --preset fast
 python -m bts_nvs.render --checkpoint outputs/.../config.yml --targets processed_scene/target_cameras.json --out submission/scene_id --strict-contest
 python -m bts_nvs.evaluate --pred submission/scene_id --gt VAI_NVS_DATA/phase1/public_set/scene_id/test/images --match-by-stem --psnr-max 40
 python -m bts_nvs.package --submission submission --out submission.zip
+```
+
+If no trained Nerfstudio checkpoint is available yet, create a low-cost
+submission smoke test with nearest training views:
+
+```powershell
+python -m bts_nvs.nearest_view --root VAI_NVS_DATA/phase1/private_set1 --out submission/nearest_private_set1
+python -m bts_nvs.package --submission submission/nearest_private_set1 --out submission_round1_nearest.zip
 ```
 
 Non-dry-run training captures the external `ns-train` output to
