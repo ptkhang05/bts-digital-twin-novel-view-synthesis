@@ -4,6 +4,7 @@ import argparse
 from dataclasses import dataclass
 from pathlib import Path
 
+from bts_nvs.contest import DEFAULT_CONTEST_PHASE
 from bts_nvs.prepare import PreparedScene, prepare_scene
 from bts_nvs.vai import discover_vai_phase1_scenes
 
@@ -32,6 +33,7 @@ def prepare_dataset(
     copy_mode: str = "copy",
     overwrite: bool = False,
     strict_contest: bool = False,
+    contest_phase: str = DEFAULT_CONTEST_PHASE,
 ) -> PreparedDataset:
     root_path = Path(root)
     output_path = Path(output)
@@ -44,6 +46,7 @@ def prepare_dataset(
                 copy_mode=copy_mode,
                 overwrite=overwrite,
                 strict_contest=strict_contest,
+                contest_phase=contest_phase,
             )
         )
     return PreparedDataset(output_path, prepared)
@@ -56,6 +59,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--copy-mode", choices=("copy", "hardlink", "symlink"), default="copy")
     parser.add_argument("--overwrite", action="store_true", help="Replace existing per-scene output directories.")
     parser.add_argument("--strict-contest", action="store_true", help="Enforce public phase1 train/target count constraints.")
+    parser.add_argument(
+        "--contest-phase",
+        default=DEFAULT_CONTEST_PHASE,
+        help="Contest rule set for --strict-contest. Known values: phase1, overview.",
+    )
     return parser
 
 
@@ -67,6 +75,7 @@ def main() -> None:
         copy_mode=args.copy_mode,
         overwrite=args.overwrite,
         strict_contest=args.strict_contest,
+        contest_phase=args.contest_phase,
     )
     print(f"Wrote {result.scene_count} scenes, {result.image_count} train frames, {result.target_count} target poses")
 

@@ -64,7 +64,7 @@ def test_build_camera_path_strict_contest_rejects_too_few_targets(tmp_path: Path
     target_file = tmp_path / "target_cameras.json"
     target_file.write_text(json.dumps(targets), encoding="utf-8")
 
-    with pytest.raises(DataValidationError, match="20-60"):
+    with pytest.raises(DataValidationError, match="40-70"):
         build_camera_path(target_file, strict_contest=True)
 
 

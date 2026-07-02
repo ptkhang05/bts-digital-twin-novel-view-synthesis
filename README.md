@@ -7,13 +7,13 @@ Splatting model with `splatfacto`, renders RGB target views as PNG image
 sequences, evaluates predictions against holdout ground truth when available,
 and packages multi-scene predictions into a ZIP submission.
 
-The public contest description says each scene contains 100-300 RGB images with
-camera intrinsics/poses. The released phase1 data uses COLMAP sparse
-reconstructions under `train/sparse/0` and target poses under
-`test/test_poses.csv`; observed target counts range from 26-60 poses per scene.
-Public phase metadata lists `FILE_ZIP` submissions on `GPU` workers. The exact
-ZIP layout is still not stated in the public API, so the ZIP layout here is a
-conservative default: `scene_id/*.png`.
+The general public problem statement says each scene contains 100-300 RGB images
+with camera intrinsics/poses and 20-50 target views. The round 1 brief is more
+specific: 150-300 train images and 40-70 target views. The released phase1 data
+uses COLMAP sparse reconstructions under `train/sparse/0` and target poses under
+`test/test_poses.csv`. Public phase metadata lists `FILE_ZIP` submissions on
+`GPU` workers. The exact ZIP layout is still not stated in the public API, so
+the ZIP layout here is a conservative default: `scene_id/*.png`.
 
 Source: https://competition.viettel.vn/contests/var-2026
 
@@ -43,11 +43,11 @@ Target views use the same JSON camera schema as `transforms.json`.
 
 When a raw scene contains `target_cameras.json`, `prepare` validates and copies
 it to the processed scene. For VAI phase1 scenes, `prepare` converts
-`test/test_poses.csv` into `target_cameras.json`. Use `--strict-contest` to
-enforce the observed phase1 ranges:
+`test/test_poses.csv` into `target_cameras.json`. Use `--strict-contest` with
+`--contest-phase` to enforce a known BTC rule set:
 
-- 100-300 training images per scene.
-- 20-60 target cameras per scene, when target poses are present.
+- `phase1`: 150-300 training images, 40-70 target cameras.
+- `overview`: 100-300 training images, 20-50 target cameras.
 
 ## Commands
 
@@ -56,7 +56,7 @@ python -m bts_nvs.prepare_dataset --root VAI_NVS_DATA/phase1/public_set --out pr
 python -m bts_nvs.prepare --scene raw_scene --out processed_scene --strict-contest
 python -m bts_nvs.train --scene processed_scene --preset fast
 python -m bts_nvs.render --checkpoint outputs/.../config.yml --targets processed_scene/target_cameras.json --out submission/scene_id --strict-contest
-python -m bts_nvs.evaluate --pred submission/scene_id --gt VAI_NVS_DATA/phase1/public_set/scene_id/test/images --match-by-stem
+python -m bts_nvs.evaluate --pred submission/scene_id --gt VAI_NVS_DATA/phase1/public_set/scene_id/test/images --match-by-stem --psnr-max 40
 python -m bts_nvs.package --submission submission --out submission.zip
 ```
 
@@ -94,3 +94,6 @@ filenames, folder names, or a required manifest.
   camera rotation and converts to Nerfstudio/OpenGL camera-to-world matrices.
 - Rendered predictions are PNGs, while public ground-truth test images are JPGs;
   use `--match-by-stem` for local public-set evaluation.
+- When SSIM and LPIPS dependencies are installed, `evaluate` also reports BTC's
+  aggregate score: `0.4 * (1 - LPIPS) + 0.3 * SSIM + 0.3 * psnr_norm`, where
+  `psnr_norm = clamp(PSNR / --psnr-max, 0, 1)`.

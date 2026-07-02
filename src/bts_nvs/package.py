@@ -5,7 +5,7 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from bts_nvs.contest import validate_target_view_count
+from bts_nvs.contest import DEFAULT_CONTEST_PHASE, validate_target_view_count
 from bts_nvs.exceptions import DataValidationError
 
 
@@ -20,6 +20,7 @@ def create_submission_zip(
     submission: Path | str,
     output: Path | str,
     strict_contest: bool = True,
+    contest_phase: str = DEFAULT_CONTEST_PHASE,
 ) -> PackagedSubmission:
     submission_dir = Path(submission)
     output_path = Path(output)
@@ -35,7 +36,7 @@ def create_submission_zip(
     with zipfile.ZipFile(output_path, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
         for scene_id, images in scenes:
             if strict_contest:
-                validate_target_view_count(len(images))
+                validate_target_view_count(len(images), phase=contest_phase)
             for image_path in images:
                 archive.write(image_path, f"{scene_id}/{image_path.name}")
                 image_count += 1
@@ -65,14 +66,24 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-strict-contest",
         action="store_true",
-        help="Do not enforce the public 20-50 target views per scene constraint.",
+        help="Do not enforce target-view limits from the selected rule set.",
+    )
+    parser.add_argument(
+        "--contest-phase",
+        default=DEFAULT_CONTEST_PHASE,
+        help="Contest rule set for strict validation. Known values: phase1, overview.",
     )
     return parser
 
 
 def main() -> None:
     args = build_arg_parser().parse_args()
-    result = create_submission_zip(args.submission, args.out, strict_contest=not args.no_strict_contest)
+    result = create_submission_zip(
+        args.submission,
+        args.out,
+        strict_contest=not args.no_strict_contest,
+        contest_phase=args.contest_phase,
+    )
     print(f"Wrote {result.zip_path} with {result.image_count} PNGs from {result.scene_count} scenes")
 
 

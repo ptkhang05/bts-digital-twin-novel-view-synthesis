@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from bts_nvs.colmap import colmap_model_to_nerfstudio, find_colmap_sparse_dir, read_colmap_model, write_ascii_ply
-from bts_nvs.contest import validate_target_view_count, validate_training_image_count
+from bts_nvs.contest import DEFAULT_CONTEST_PHASE, validate_target_view_count, validate_training_image_count
 from bts_nvs.exceptions import DataValidationError
 from bts_nvs.schema import (
     load_json,
@@ -37,6 +37,7 @@ def prepare_scene(
     overwrite: bool = False,
     holdout_interval: int = 0,
     strict_contest: bool = False,
+    contest_phase: str = DEFAULT_CONTEST_PHASE,
 ) -> PreparedScene:
     scene_path = Path(scene)
     output_path = Path(output)
@@ -51,12 +52,17 @@ def prepare_scene(
     source_format, transforms, point_count = _load_scene_transforms(scene_path, output_path)
     transforms = validate_transforms(transforms, scene=scene_path)
     if strict_contest:
-        validate_training_image_count(len(transforms["frames"]))
+        validate_training_image_count(len(transforms["frames"]), phase=contest_phase)
     _copy_images(scene_path, output_path, transforms, copy_mode=copy_mode)
     if holdout_interval:
         _apply_holdout_split(transforms, holdout_interval=holdout_interval)
     transforms = validate_transforms(transforms, scene=output_path)
-    target_cameras_path, target_count = _copy_target_cameras(scene_path, output_path, strict_contest=strict_contest)
+    target_cameras_path, target_count = _copy_target_cameras(
+        scene_path,
+        output_path,
+        strict_contest=strict_contest,
+        contest_phase=contest_phase,
+    )
 
     transforms_path = output_path / "transforms.json"
     metadata_path = output_path / "metadata.json"
@@ -143,7 +149,12 @@ def _copy_images(scene: Path, output: Path, transforms: dict, copy_mode: str) ->
         frame["file_path"] = relpath.as_posix()
 
 
-def _copy_target_cameras(scene: Path, output: Path, strict_contest: bool) -> tuple[Path | None, int | None]:
+def _copy_target_cameras(
+    scene: Path,
+    output: Path,
+    strict_contest: bool,
+    contest_phase: str,
+) -> tuple[Path | None, int | None]:
     target_path = scene / "target_cameras.json"
     if target_path.exists():
         targets = validate_transforms(load_json(target_path))
@@ -153,7 +164,7 @@ def _copy_target_cameras(scene: Path, output: Path, strict_contest: bool) -> tup
         return None, None
     target_count = len(targets["frames"])
     if strict_contest:
-        validate_target_view_count(target_count)
+        validate_target_view_count(target_count, phase=contest_phase)
     output_path = output / "target_cameras.json"
     write_json(output_path, targets)
     return output_path, target_count
@@ -194,7 +205,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--strict-contest",
         action="store_true",
-        help="Enforce public Viettel AI Race scene size constraints: 100-300 train images, 20-50 targets if present.",
+        help="Enforce the selected Viettel AI Race rule set.",
+    )
+    parser.add_argument(
+        "--contest-phase",
+        default=DEFAULT_CONTEST_PHASE,
+        help="Contest rule set for --strict-contest. Known values: phase1, overview.",
     )
     return parser
 
@@ -208,6 +224,7 @@ def main() -> None:
         overwrite=args.overwrite,
         holdout_interval=args.holdout_interval,
         strict_contest=args.strict_contest,
+        contest_phase=args.contest_phase,
     )
     print(f"Wrote {result.transforms_path} with {result.image_count} frames")
 

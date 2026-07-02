@@ -12,9 +12,15 @@ from bts_nvs.exceptions import DataValidationError
 
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg"}
+DEFAULT_PSNR_MAX = 40.0
 
 
-def evaluate_directories(pred: Path | str, gt: Path | str, match_by_stem: bool = False) -> dict[str, float | int]:
+def evaluate_directories(
+    pred: Path | str,
+    gt: Path | str,
+    match_by_stem: bool = False,
+    psnr_max: float = DEFAULT_PSNR_MAX,
+) -> dict[str, float | int]:
     pred_dir = Path(pred)
     gt_dir = Path(gt)
     pairs = _match_images(pred_dir, gt_dir, match_by_stem=match_by_stem)
@@ -46,7 +52,28 @@ def evaluate_directories(pred: Path | str, gt: Path | str, match_by_stem: bool =
     lpips_score = _try_compute_lpips(pairs)
     if lpips_score is not None:
         result["lpips"] = lpips_score
+    if ssim is not None and lpips_score is not None:
+        result["psnr_norm"] = normalize_psnr(psnr, psnr_max=psnr_max)
+        result["score"] = compute_competition_score(psnr=psnr, ssim=ssim, lpips=lpips_score, psnr_max=psnr_max)
     return result
+
+
+def normalize_psnr(psnr: float, psnr_max: float = DEFAULT_PSNR_MAX) -> float:
+    if psnr_max <= 0:
+        raise ValueError("psnr_max must be positive")
+    if math.isinf(psnr):
+        return 1.0
+    return max(0.0, min(float(psnr) / float(psnr_max), 1.0))
+
+
+def compute_competition_score(
+    psnr: float,
+    ssim: float,
+    lpips: float,
+    psnr_max: float = DEFAULT_PSNR_MAX,
+) -> float:
+    psnr_norm = normalize_psnr(psnr, psnr_max=psnr_max)
+    return 0.4 * (1.0 - float(lpips)) + 0.3 * float(ssim) + 0.3 * psnr_norm
 
 
 def _match_images(pred_dir: Path, gt_dir: Path, match_by_stem: bool) -> list[tuple[Path, Path]]:
@@ -124,12 +151,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gt", type=Path, required=True)
     parser.add_argument("--out", type=Path, default=None, help="Optional JSON metrics output path.")
     parser.add_argument("--match-by-stem", action="store_true", help="Match pred/gt images by filename stem, ignoring extension.")
+    parser.add_argument(
+        "--psnr-max",
+        type=float,
+        default=DEFAULT_PSNR_MAX,
+        help="PSNR value that maps to psnr_norm=1.0 for BTC aggregate score.",
+    )
     return parser
 
 
 def main() -> None:
     args = build_arg_parser().parse_args()
-    result = evaluate_directories(args.pred, args.gt, match_by_stem=args.match_by_stem)
+    result = evaluate_directories(args.pred, args.gt, match_by_stem=args.match_by_stem, psnr_max=args.psnr_max)
     payload = json.dumps(result, indent=2, allow_nan=True)
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)

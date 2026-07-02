@@ -4,7 +4,7 @@ import math
 
 from PIL import Image
 
-from bts_nvs.evaluate import evaluate_directories
+from bts_nvs.evaluate import compute_competition_score, evaluate_directories, normalize_psnr
 
 
 def test_evaluate_identical_images_reports_zero_mae_and_infinite_psnr(tmp_path: Path):
@@ -48,3 +48,16 @@ def test_evaluate_can_match_png_predictions_to_jpg_ground_truth_by_stem(tmp_path
 
     assert result["count"] == 1
     assert result["mae"] == 0.0
+
+
+def test_normalize_psnr_clamps_to_unit_interval():
+    assert normalize_psnr(-1.0, psnr_max=40.0) == 0.0
+    assert normalize_psnr(20.0, psnr_max=40.0) == 0.5
+    assert normalize_psnr(80.0, psnr_max=40.0) == 1.0
+    assert normalize_psnr(math.inf, psnr_max=40.0) == 1.0
+
+
+def test_compute_competition_score_uses_btc_weighting():
+    score = compute_competition_score(psnr=20.0, ssim=0.8, lpips=0.25, psnr_max=40.0)
+
+    assert math.isclose(score, 0.4 * (1.0 - 0.25) + 0.3 * 0.8 + 0.3 * 0.5)

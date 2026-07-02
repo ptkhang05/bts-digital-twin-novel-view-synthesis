@@ -5,17 +5,21 @@ import shutil
 from pathlib import Path
 
 from bts_nvs.camera import compute_vertical_fov_degrees
-from bts_nvs.contest import validate_target_view_count
+from bts_nvs.contest import DEFAULT_CONTEST_PHASE, validate_target_view_count
 from bts_nvs.exceptions import DataValidationError
 from bts_nvs.schema import frame_intrinsics, load_json, validate_transforms, write_json
 from bts_nvs.train import run_external_command
 
 
-def build_camera_path(targets_path: Path | str, strict_contest: bool = False) -> tuple[dict, list[str]]:
+def build_camera_path(
+    targets_path: Path | str,
+    strict_contest: bool = False,
+    contest_phase: str = DEFAULT_CONTEST_PHASE,
+) -> tuple[dict, list[str]]:
     targets_file = Path(targets_path)
     targets = validate_transforms(load_json(targets_file))
     if strict_contest:
-        validate_target_view_count(len(targets["frames"]))
+        validate_target_view_count(len(targets["frames"]), phase=contest_phase)
     names: list[str] = []
     camera_entries: list[dict] = []
     first_intrinsics = frame_intrinsics(targets["frames"][0], targets)
@@ -77,10 +81,11 @@ def render_targets(
     output: Path | str,
     dry_run: bool = False,
     strict_contest: bool = False,
+    contest_phase: str = DEFAULT_CONTEST_PHASE,
 ) -> list[str]:
     output_dir = Path(output)
     output_dir.mkdir(parents=True, exist_ok=True)
-    camera_path, target_names = build_camera_path(targets, strict_contest=strict_contest)
+    camera_path, target_names = build_camera_path(targets, strict_contest=strict_contest, contest_phase=contest_phase)
     camera_path_file = output_dir / "camera_path.json"
     nerfstudio_output = output_dir / "targets"
     write_json(camera_path_file, camera_path)
@@ -109,13 +114,25 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--targets", type=Path, required=True, help="Target camera JSON.")
     parser.add_argument("--out", type=Path, required=True, help="Submission image output directory.")
     parser.add_argument("--dry-run", action="store_true", help="Write camera path and print command without running.")
-    parser.add_argument("--strict-contest", action="store_true", help="Enforce 20-50 target views per scene.")
+    parser.add_argument("--strict-contest", action="store_true", help="Enforce target-view limits from the selected rule set.")
+    parser.add_argument(
+        "--contest-phase",
+        default=DEFAULT_CONTEST_PHASE,
+        help="Contest rule set for --strict-contest. Known values: phase1, overview.",
+    )
     return parser
 
 
 def main() -> None:
     args = build_arg_parser().parse_args()
-    command = render_targets(args.checkpoint, args.targets, args.out, dry_run=args.dry_run, strict_contest=args.strict_contest)
+    command = render_targets(
+        args.checkpoint,
+        args.targets,
+        args.out,
+        dry_run=args.dry_run,
+        strict_contest=args.strict_contest,
+        contest_phase=args.contest_phase,
+    )
     print(" ".join(command))
 
 
