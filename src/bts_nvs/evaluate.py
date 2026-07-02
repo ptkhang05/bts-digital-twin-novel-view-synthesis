@@ -1,0 +1,125 @@
+from __future__ import annotations
+
+import argparse
+import json
+import math
+from pathlib import Path
+
+import numpy as np
+from PIL import Image
+
+from bts_nvs.exceptions import DataValidationError
+
+
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg"}
+
+
+def evaluate_directories(pred: Path | str, gt: Path | str) -> dict[str, float | int]:
+    pred_dir = Path(pred)
+    gt_dir = Path(gt)
+    pairs = _match_images(pred_dir, gt_dir)
+    if not pairs:
+        raise DataValidationError(f"No matching images found between {pred_dir} and {gt_dir}")
+
+    maes: list[float] = []
+    mses: list[float] = []
+    for pred_path, gt_path in pairs:
+        pred_image = _load_rgb(pred_path)
+        gt_image = _load_rgb(gt_path)
+        if pred_image.shape != gt_image.shape:
+            raise DataValidationError(f"Shape mismatch for {pred_path.name}: {pred_image.shape} vs {gt_image.shape}")
+        diff = pred_image - gt_image
+        maes.append(float(np.mean(np.abs(diff))))
+        mses.append(float(np.mean(diff * diff)))
+
+    mse = float(np.mean(mses))
+    psnr = math.inf if mse == 0 else float(20.0 * math.log10(255.0 / math.sqrt(mse)))
+    result: dict[str, float | int] = {
+        "count": len(pairs),
+        "mae": float(np.mean(maes)),
+        "mse": mse,
+        "psnr": psnr,
+    }
+    ssim = _try_compute_ssim(pairs)
+    if ssim is not None:
+        result["ssim"] = ssim
+    lpips_score = _try_compute_lpips(pairs)
+    if lpips_score is not None:
+        result["lpips"] = lpips_score
+    return result
+
+
+def _match_images(pred_dir: Path, gt_dir: Path) -> list[tuple[Path, Path]]:
+    if not pred_dir.exists():
+        raise DataValidationError(f"Prediction directory does not exist: {pred_dir}")
+    if not gt_dir.exists():
+        raise DataValidationError(f"Ground-truth directory does not exist: {gt_dir}")
+    pred_by_name = {path.name: path for path in pred_dir.iterdir() if path.suffix.lower() in IMAGE_SUFFIXES}
+    gt_by_name = {path.name: path for path in gt_dir.iterdir() if path.suffix.lower() in IMAGE_SUFFIXES}
+    return [(pred_by_name[name], gt_by_name[name]) for name in sorted(pred_by_name.keys() & gt_by_name.keys())]
+
+
+def _load_rgb(path: Path) -> np.ndarray:
+    with Image.open(path) as image:
+        return np.asarray(image.convert("RGB"), dtype=np.float64)
+
+
+def _try_compute_ssim(pairs: list[tuple[Path, Path]]) -> float | None:
+    try:
+        from skimage.metrics import structural_similarity
+    except ImportError:
+        return None
+    scores = []
+    for pred_path, gt_path in pairs:
+        pred = _load_rgb(pred_path)
+        gt = _load_rgb(gt_path)
+        scores.append(float(structural_similarity(gt, pred, channel_axis=2, data_range=255)))
+    return float(np.mean(scores))
+
+
+def _try_compute_lpips(pairs: list[tuple[Path, Path]]) -> float | None:
+    try:
+        import lpips
+        import torch
+    except ImportError:
+        return None
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    loss_fn = lpips.LPIPS(net="alex").to(device)
+    scores = []
+    with torch.no_grad():
+        for pred_path, gt_path in pairs:
+            pred = _load_rgb(pred_path)
+            gt = _load_rgb(gt_path)
+            pred_tensor = _image_to_lpips_tensor(pred, torch, device)
+            gt_tensor = _image_to_lpips_tensor(gt, torch, device)
+            scores.append(float(loss_fn(pred_tensor, gt_tensor).item()))
+    return float(np.mean(scores))
+
+
+def _image_to_lpips_tensor(image: np.ndarray, torch_module, device: str):
+    tensor = torch_module.from_numpy(image.astype(np.float32) / 127.5 - 1.0)
+    tensor = tensor.permute(2, 0, 1).unsqueeze(0)
+    return tensor.to(device)
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Evaluate rendered RGB images against ground truth.")
+    parser.add_argument("--pred", type=Path, required=True)
+    parser.add_argument("--gt", type=Path, required=True)
+    parser.add_argument("--out", type=Path, default=None, help="Optional JSON metrics output path.")
+    return parser
+
+
+def main() -> None:
+    args = build_arg_parser().parse_args()
+    result = evaluate_directories(args.pred, args.gt)
+    payload = json.dumps(result, indent=2, allow_nan=True)
+    if args.out:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(payload + "\n", encoding="utf-8")
+    print(payload)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bts-nvs"
+version = "0.1.0"
+description = "Baseline pipeline for BTS digital twin novel view synthesis with Nerfstudio/3DGS."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.24",
+  "Pillow>=10.0",
+]
+
+[project.optional-dependencies]
+metrics = ["scikit-image>=0.22"]
+perceptual = ["lpips>=0.1.4"]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
