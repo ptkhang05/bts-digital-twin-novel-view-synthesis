@@ -12,8 +12,9 @@ with camera intrinsics/poses and 20-50 target views. The round 1 brief is more
 specific: 150-300 train images and 40-70 target views. The released phase1 data
 uses COLMAP sparse reconstructions under `train/sparse/0` and target poses under
 `test/test_poses.csv`. Public phase metadata lists `FILE_ZIP` submissions on
-`GPU` workers. The exact ZIP layout is still not stated in the public API, so
-the ZIP layout here is a conservative default: `scene_id/*.png`.
+`GPU` workers. The BTC PDF briefs specify a ZIP submission containing rendered
+PNG files grouped by scene, so this project packages predictions as
+`scene_id/*.png`.
 
 Source: https://competition.viettel.vn/contests/var-2026
 
@@ -60,6 +61,10 @@ python -m bts_nvs.evaluate --pred submission/scene_id --gt VAI_NVS_DATA/phase1/p
 python -m bts_nvs.package --submission submission --out submission.zip
 ```
 
+Non-dry-run training captures the external `ns-train` output to
+`<processed_scene>/training.log` by default. Override it with `--log-file` when
+you want logs outside the processed scene directory.
+
 For a dry run that prints the external command without running Nerfstudio:
 
 ```powershell
@@ -74,15 +79,17 @@ The package command writes only PNG files into the archive:
 ```text
 submission.zip
   scene_001/
-    target_000.png
-    target_001.png
+    <target_image_name>.png
+    <another_target_image_name>.png
   scene_002/
-    target_000.png
+    <target_image_name>.png
 ```
 
-This is an implementation assumption, not a confirmed official ZIP schema.
-Replace the packaging adapter once the registered dataset brief specifies exact
-filenames, folder names, or a required manifest.
+For VAI phase1, rendered filenames follow the `image_name` column in
+`test/test_poses.csv` with a PNG extension. The general problem statement also
+shows numbered filenames such as `0001.png`; treat that as a round-specific
+adapter concern if BTC later requires numbered output instead of phase1
+`image_name` output.
 
 ## VAI Phase1 Notes
 

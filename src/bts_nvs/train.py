@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -33,13 +34,54 @@ def build_train_command(
     return command
 
 
-def run_external_command(command: list[str]) -> None:
-    try:
-        subprocess.run(command, check=True)
-    except FileNotFoundError as exc:
-        raise ExternalCommandError(f"Command not found: {command[0]}. Install Nerfstudio in this environment.") from exc
-    except subprocess.CalledProcessError as exc:
-        raise ExternalCommandError(f"External command failed with exit code {exc.returncode}: {' '.join(command)}") from exc
+def default_train_log_path(scene: Path | str) -> Path:
+    return Path(scene) / "training.log"
+
+
+def run_external_command(command: list[str], log_path: Path | str | None = None) -> None:
+    if log_path is None:
+        try:
+            subprocess.run(command, check=True)
+        except FileNotFoundError as exc:
+            raise ExternalCommandError(
+                f"Command not found: {command[0]}. Install Nerfstudio in this environment."
+            ) from exc
+        except subprocess.CalledProcessError as exc:
+            raise ExternalCommandError(
+                f"External command failed with exit code {exc.returncode}: {' '.join(command)}"
+            ) from exc
+        return
+
+    resolved_log_path = Path(log_path)
+    resolved_log_path.parent.mkdir(parents=True, exist_ok=True)
+    with resolved_log_path.open("w", encoding="utf-8") as log_file:
+        log_file.write(f"$ {shlex.join(command)}\n\n")
+        log_file.flush()
+
+        try:
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except FileNotFoundError as exc:
+            raise ExternalCommandError(
+                f"Command not found: {command[0]}. Install Nerfstudio in this environment."
+            ) from exc
+
+        if process.stdout is None:
+            raise ExternalCommandError(f"External command did not expose stdout: {' '.join(command)}")
+        for line in process.stdout:
+            print(line, end="", flush=True)
+            log_file.write(line)
+            log_file.flush()
+
+        return_code = process.wait()
+        if return_code != 0:
+            raise ExternalCommandError(f"External command failed with exit code {return_code}: {' '.join(command)}")
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -48,6 +90,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--preset", choices=tuple(PRESETS), default="fast")
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--experiment-name", default=None)
+    parser.add_argument(
+        "--log-file",
+        type=Path,
+        default=None,
+        help="Path for captured ns-train output. Defaults to <scene>/training.log.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print the command without running it.")
     parser.add_argument("extra_args", nargs=argparse.REMAINDER, help="Extra args passed after -- to ns-train.")
     return parser
@@ -68,7 +116,7 @@ def main() -> None:
     if args.dry_run:
         print(" ".join(command))
         return
-    run_external_command(command)
+    run_external_command(command, log_path=args.log_file or default_train_log_path(args.scene))
 
 
 if __name__ == "__main__":
