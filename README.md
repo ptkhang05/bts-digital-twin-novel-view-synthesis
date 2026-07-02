@@ -15,9 +15,10 @@ official BTC-provided data, this project validates phase1 with the observed
 safe envelope: 100-300 train images and 20-70 target views. The released phase1
 data uses COLMAP sparse reconstructions under `train/sparse/0` and target poses
 under `test/test_poses.csv`. Public phase metadata lists `FILE_ZIP` submissions
-on `GPU` workers. The BTC PDF briefs specify a ZIP submission containing
-rendered PNG files grouped by scene, so this project packages predictions as
-`scene_id/*.png`.
+on `GPU` workers. The BTC PDF briefs show PNG examples, but the round 1 brief
+also says filenames must follow `image_name` in `test/test_poses.csv`. The
+phase1 CSV currently uses `.JPG` names, so submission packaging preserves exact
+target filenames.
 
 Source: https://competition.viettel.vn/contests/var-2026
 
@@ -69,9 +70,14 @@ If no trained Nerfstudio checkpoint is available yet, create a low-cost
 submission smoke test with nearest training views:
 
 ```powershell
-python -m bts_nvs.nearest_view --root VAI_NVS_DATA/phase1/private_set1 --out submission/nearest_private_set1
-python -m bts_nvs.package --submission submission/nearest_private_set1 --out submission_round1_nearest.zip
+python -m bts_nvs.nearest_view --root VAI_NVS_DATA/phase1/private_set1 --out submission/nearest_private_set1 --jpeg-quality 92
+python -m bts_nvs.package --submission submission/nearest_private_set1 --out submission_round1.zip
 ```
+
+For phase1, this writes exact `image_name` filenames such as
+`DJI_..._V.JPG`. This avoids a zero-score failure mode where scenes match but
+per-pose images are treated as missing because `.JPG` target names were changed
+to `.png`.
 
 Non-dry-run training captures the external `ns-train` output to
 `<processed_scene>/training.log` by default. Override it with `--log-file` when
@@ -86,22 +92,21 @@ python -m bts_nvs.render --checkpoint outputs/.../config.yml --targets target_ca
 
 ## Submission Layout
 
-The package command writes only PNG files into the archive:
+The package command writes supported image files into the archive:
 
 ```text
 submission.zip
   scene_001/
-    <target_image_name>.png
-    <another_target_image_name>.png
+    <target_image_name>
+    <another_target_image_name>
   scene_002/
-    <target_image_name>.png
+    <target_image_name>
 ```
 
 For VAI phase1, rendered filenames follow the `image_name` column in
-`test/test_poses.csv` with a PNG extension. The general problem statement also
-shows numbered filenames such as `0001.png`; treat that as a round-specific
-adapter concern if BTC later requires numbered output instead of phase1
-`image_name` output.
+`test/test_poses.csv` exactly. The general problem statement also shows
+numbered PNG filenames such as `0001.png`; treat that as illustrative unless a
+round-specific adapter says otherwise.
 
 ## VAI Phase1 Notes
 
@@ -111,8 +116,9 @@ adapter concern if BTC later requires numbered output instead of phase1
 - `test_poses.csv` stores `tx,ty,tz` as world-space camera position according to
   the released README. The adapter treats quaternion columns as OpenCV/COLMAP
   camera rotation and converts to Nerfstudio/OpenGL camera-to-world matrices.
-- Rendered predictions are PNGs, while public ground-truth test images are JPGs;
-  use `--match-by-stem` for local public-set evaluation.
+- Rendered predictions from Nerfstudio are PNGs by default, while phase1 target
+  filenames are often `.JPG`. Preserve exact target names for submission, or the
+  evaluator may mark images missing even when scene directories match.
 - When SSIM and LPIPS dependencies are installed, `evaluate` also reports BTC's
   aggregate score: `0.4 * (1 - LPIPS) + 0.3 * SSIM + 0.3 * psnr_norm`, where
   `psnr_norm = clamp(PSNR / --psnr-max, 0, 1)`.

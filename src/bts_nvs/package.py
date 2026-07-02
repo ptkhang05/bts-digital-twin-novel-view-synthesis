@@ -8,6 +8,8 @@ from pathlib import Path
 from bts_nvs.contest import DEFAULT_CONTEST_PHASE, validate_target_view_count
 from bts_nvs.exceptions import DataValidationError
 
+SUBMISSION_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg"}
+
 
 @dataclass(frozen=True)
 class PackagedSubmission:
@@ -29,7 +31,7 @@ def create_submission_zip(
 
     scenes = discover_scene_outputs(submission_dir)
     if not scenes:
-        raise DataValidationError(f"No PNG predictions found under {submission_dir}")
+        raise DataValidationError(f"No image predictions found under {submission_dir}")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     image_count = 0
@@ -47,21 +49,25 @@ def discover_scene_outputs(submission_dir: Path) -> list[tuple[str, list[Path]]]
     scene_dirs = [path for path in sorted(submission_dir.iterdir()) if path.is_dir()]
     scenes: list[tuple[str, list[Path]]] = []
     for scene_dir in scene_dirs:
-        images = sorted(path for path in scene_dir.iterdir() if path.is_file() and path.suffix.lower() == ".png")
+        images = sorted(path for path in scene_dir.iterdir() if _is_submission_image(path))
         if images:
             scenes.append((scene_dir.name, images))
     if scenes:
         return scenes
 
-    root_images = sorted(path for path in submission_dir.iterdir() if path.is_file() and path.suffix.lower() == ".png")
+    root_images = sorted(path for path in submission_dir.iterdir() if _is_submission_image(path))
     if root_images:
         return [(submission_dir.name, root_images)]
     return []
 
 
+def _is_submission_image(path: Path) -> bool:
+    return path.is_file() and path.suffix.lower() in SUBMISSION_IMAGE_SUFFIXES
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Package rendered scene predictions into a contest ZIP file.")
-    parser.add_argument("--submission", type=Path, required=True, help="Directory containing scene_id/*.png outputs.")
+    parser.add_argument("--submission", type=Path, required=True, help="Directory containing scene_id/* image outputs.")
     parser.add_argument("--out", type=Path, required=True, help="ZIP file path to write.")
     parser.add_argument(
         "--no-strict-contest",
@@ -84,7 +90,7 @@ def main() -> None:
         strict_contest=not args.no_strict_contest,
         contest_phase=args.contest_phase,
     )
-    print(f"Wrote {result.zip_path} with {result.image_count} PNGs from {result.scene_count} scenes")
+    print(f"Wrote {result.zip_path} with {result.image_count} images from {result.scene_count} scenes")
 
 
 if __name__ == "__main__":

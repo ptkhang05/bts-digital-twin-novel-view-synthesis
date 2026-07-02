@@ -13,6 +13,10 @@ from bts_nvs.colmap import read_colmap_model
 from bts_nvs.exceptions import DataValidationError
 from bts_nvs.vai import TEST_POSE_COLUMNS, discover_vai_phase1_scenes, train_image_names
 
+JPEG_SUFFIXES = {".jpg", ".jpeg"}
+IMAGE_FORMATS = {"auto", "jpeg", "png"}
+NAME_POLICIES = {"exact", "png"}
+
 
 @dataclass(frozen=True)
 class NearestViewSubmission:
@@ -29,34 +33,61 @@ class TargetPose:
     height: int
 
 
-def render_nearest_dataset(root: Path | str, output: Path | str) -> NearestViewSubmission:
+def render_nearest_dataset(
+    root: Path | str,
+    output: Path | str,
+    name_policy: str = "exact",
+    image_format: str = "auto",
+    jpeg_quality: int = 92,
+) -> NearestViewSubmission:
     root_path = Path(root)
     output_path = Path(output)
     scene_count = 0
     image_count = 0
     for scene in discover_vai_phase1_scenes(root_path):
-        image_count += render_nearest_scene(scene, output_path / scene.name)
+        image_count += render_nearest_scene(
+            scene,
+            output_path / scene.name,
+            name_policy=name_policy,
+            image_format=image_format,
+            jpeg_quality=jpeg_quality,
+        )
         scene_count += 1
     return NearestViewSubmission(output_path, scene_count=scene_count, image_count=image_count)
 
 
-def render_nearest_scene(scene: Path | str, output: Path | str) -> int:
+def render_nearest_scene(
+    scene: Path | str,
+    output: Path | str,
+    name_policy: str = "exact",
+    image_format: str = "auto",
+    jpeg_quality: int = 92,
+) -> int:
+    _validate_output_options(name_policy=name_policy, image_format=image_format, jpeg_quality=jpeg_quality)
     scene_path = Path(scene)
     output_path = Path(output)
     output_path.mkdir(parents=True, exist_ok=True)
-    for stale_png in output_path.glob("*.png"):
-        stale_png.unlink()
+    for stale_image in output_path.iterdir():
+        if stale_image.is_file() and stale_image.suffix.lower() in {".png", ".jpg", ".jpeg"}:
+            stale_image.unlink()
 
     train_centers = _read_train_camera_centers(scene_path)
     targets = _read_target_poses(scene_path / "test" / "test_poses.csv")
     seen_outputs: set[str] = set()
     for target in targets:
-        output_name = _target_png_name(target.image_name)
+        output_name = _target_output_name(target.image_name, name_policy=name_policy)
         if output_name in seen_outputs:
-            raise DataValidationError(f"Duplicate target output name after PNG conversion: {output_name}")
+            raise DataValidationError(f"Duplicate target output name after policy conversion: {output_name}")
         seen_outputs.add(output_name)
         source_image = _nearest_train_image(train_centers, target.camera_center)
-        _write_resized_png(source_image, output_path / output_name, width=target.width, height=target.height)
+        _write_resized_image(
+            source_image,
+            output_path / output_name,
+            width=target.width,
+            height=target.height,
+            image_format=image_format,
+            jpeg_quality=jpeg_quality,
+        )
     return len(targets)
 
 
@@ -117,19 +148,51 @@ def _nearest_train_image(train_centers: dict[Path, np.ndarray], target_center: n
     return min(train_centers, key=lambda image_path: float(np.linalg.norm(train_centers[image_path] - target_center)))
 
 
-def _target_png_name(image_name: str) -> str:
+def _target_output_name(image_name: str, name_policy: str) -> str:
     name = Path(image_name).name
+    if name_policy == "exact":
+        return name
     if Path(name).suffix.lower() == ".png":
         return name
     return f"{Path(name).stem}.png"
 
 
-def _write_resized_png(source: Path, destination: Path, width: int, height: int) -> None:
+def _write_resized_image(
+    source: Path,
+    destination: Path,
+    width: int,
+    height: int,
+    image_format: str,
+    jpeg_quality: int,
+) -> None:
     with Image.open(source) as image:
         rgb = image.convert("RGB")
         if rgb.size != (width, height):
             rgb = rgb.resize((width, height), Image.Resampling.LANCZOS)
-        rgb.save(destination)
+        resolved_format = _resolve_image_format(destination, image_format=image_format)
+        if resolved_format == "jpeg":
+            rgb.save(destination, format="JPEG", quality=jpeg_quality, optimize=True, progressive=False)
+        elif resolved_format == "png":
+            rgb.save(destination, format="PNG", optimize=True, compress_level=9)
+        else:
+            raise DataValidationError(f"Unsupported output image format: {image_format}")
+
+
+def _resolve_image_format(destination: Path, image_format: str) -> str:
+    if image_format != "auto":
+        return image_format
+    if destination.suffix.lower() in JPEG_SUFFIXES:
+        return "jpeg"
+    return "png"
+
+
+def _validate_output_options(name_policy: str, image_format: str, jpeg_quality: int) -> None:
+    if name_policy not in NAME_POLICIES:
+        raise DataValidationError(f"Unsupported name policy: {name_policy}")
+    if image_format not in IMAGE_FORMATS:
+        raise DataValidationError(f"Unsupported image format: {image_format}")
+    if jpeg_quality < 1 or jpeg_quality > 100:
+        raise DataValidationError("jpeg_quality must be between 1 and 100")
 
 
 def _float(value: str, key: str, row_index: int) -> float:
@@ -151,17 +214,36 @@ def _positive_int(value: str, key: str, row_index: int) -> int:
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Create a low-cost nearest-training-view PNG submission for VAI phase1 scenes."
+        description="Create a low-cost nearest-training-view image submission for VAI phase1 scenes."
     )
     parser.add_argument("--root", type=Path, required=True, help="Dataset root, e.g. VAI_NVS_DATA/phase1/private_set1.")
-    parser.add_argument("--out", type=Path, required=True, help="Output directory containing scene_id/*.png files.")
+    parser.add_argument("--out", type=Path, required=True, help="Output directory containing scene_id/* image files.")
+    parser.add_argument(
+        "--name-policy",
+        choices=tuple(sorted(NAME_POLICIES)),
+        default="exact",
+        help="Use exact image_name from test_poses.csv, or force PNG-style stem names.",
+    )
+    parser.add_argument(
+        "--image-format",
+        choices=tuple(sorted(IMAGE_FORMATS)),
+        default="auto",
+        help="Output encoding. auto writes JPEG for .jpg/.jpeg names and PNG otherwise.",
+    )
+    parser.add_argument("--jpeg-quality", type=int, default=92, help="JPEG quality for JPEG outputs.")
     return parser
 
 
 def main() -> None:
     args = build_arg_parser().parse_args()
-    result = render_nearest_dataset(root=args.root, output=args.out)
-    print(f"Wrote {result.output_dir} with {result.image_count} PNGs from {result.scene_count} scenes")
+    result = render_nearest_dataset(
+        root=args.root,
+        output=args.out,
+        name_policy=args.name_policy,
+        image_format=args.image_format,
+        jpeg_quality=args.jpeg_quality,
+    )
+    print(f"Wrote {result.output_dir} with {result.image_count} images from {result.scene_count} scenes")
 
 
 if __name__ == "__main__":

@@ -30,6 +30,22 @@ def test_create_submission_zip_keeps_scene_directories_and_pngs(tmp_path: Path):
     assert "scene_002/target_039.png" in names
 
 
+def test_create_submission_zip_includes_exact_jpg_image_names(tmp_path: Path):
+    submission = tmp_path / "submission"
+    scene_dir = submission / "scene_001"
+    scene_dir.mkdir(parents=True)
+    for index in range(40):
+        Image.new("RGB", (2, 2), color=(index, index, index)).save(scene_dir / f"target_{index:03d}.JPG")
+
+    result = create_submission_zip(submission, tmp_path / "submission.zip")
+
+    assert result.image_count == 40
+    with zipfile.ZipFile(result.zip_path) as archive:
+        names = archive.namelist()
+    assert "scene_001/target_000.JPG" in names
+    assert "scene_001/target_039.JPG" in names
+
+
 def test_create_submission_zip_strict_contest_accepts_phase1_upper_range(tmp_path: Path):
     submission = tmp_path / "submission"
     _write_scene_outputs(submission, "scene_001", 65)

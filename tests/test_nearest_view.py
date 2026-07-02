@@ -35,16 +35,31 @@ def _write_nearest_scene(scene: Path) -> None:
     )
 
 
-def test_render_nearest_dataset_writes_target_named_png(tmp_path: Path):
+def test_render_nearest_dataset_writes_exact_target_name_by_default(tmp_path: Path):
     root = tmp_path / "private_set1"
     _write_nearest_scene(root / "scene_a")
 
     result = render_nearest_dataset(root=root, output=tmp_path / "submission")
 
-    output = tmp_path / "submission" / "scene_a" / "target.png"
+    output = tmp_path / "submission" / "scene_a" / "target.JPG"
     assert result.scene_count == 1
     assert result.image_count == 1
     assert output.exists()
     with Image.open(output) as image:
+        assert image.format == "JPEG"
+        assert image.mode == "RGB"
+        assert image.size == (2, 2)
+
+
+def test_render_nearest_dataset_can_force_png_stem_names(tmp_path: Path):
+    root = tmp_path / "private_set1"
+    _write_nearest_scene(root / "scene_a")
+
+    render_nearest_dataset(root=root, output=tmp_path / "submission", name_policy="png", image_format="png")
+
+    output = tmp_path / "submission" / "scene_a" / "target.png"
+    assert output.exists()
+    with Image.open(output) as image:
+        assert image.format == "PNG"
         assert image.size == (2, 2)
         assert image.getpixel((0, 0)) == (0, 0, 255)
