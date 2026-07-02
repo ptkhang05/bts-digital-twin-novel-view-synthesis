@@ -6,7 +6,7 @@ import argparse
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="python -m bts_nvs",
-        description="BTS NVS baseline. Use a submodule: prepare, train, render, or evaluate.",
+        description="BTS NVS baseline. Use a submodule: prepare, prepare_dataset, train, render, evaluate, or package.",
     )
     parser.print_help()
 

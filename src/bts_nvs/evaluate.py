@@ -14,10 +14,10 @@ from bts_nvs.exceptions import DataValidationError
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg"}
 
 
-def evaluate_directories(pred: Path | str, gt: Path | str) -> dict[str, float | int]:
+def evaluate_directories(pred: Path | str, gt: Path | str, match_by_stem: bool = False) -> dict[str, float | int]:
     pred_dir = Path(pred)
     gt_dir = Path(gt)
-    pairs = _match_images(pred_dir, gt_dir)
+    pairs = _match_images(pred_dir, gt_dir, match_by_stem=match_by_stem)
     if not pairs:
         raise DataValidationError(f"No matching images found between {pred_dir} and {gt_dir}")
 
@@ -49,14 +49,29 @@ def evaluate_directories(pred: Path | str, gt: Path | str) -> dict[str, float | 
     return result
 
 
-def _match_images(pred_dir: Path, gt_dir: Path) -> list[tuple[Path, Path]]:
+def _match_images(pred_dir: Path, gt_dir: Path, match_by_stem: bool) -> list[tuple[Path, Path]]:
     if not pred_dir.exists():
         raise DataValidationError(f"Prediction directory does not exist: {pred_dir}")
     if not gt_dir.exists():
         raise DataValidationError(f"Ground-truth directory does not exist: {gt_dir}")
     pred_by_name = {path.name: path for path in pred_dir.iterdir() if path.suffix.lower() in IMAGE_SUFFIXES}
     gt_by_name = {path.name: path for path in gt_dir.iterdir() if path.suffix.lower() in IMAGE_SUFFIXES}
-    return [(pred_by_name[name], gt_by_name[name]) for name in sorted(pred_by_name.keys() & gt_by_name.keys())]
+    if not match_by_stem:
+        return [(pred_by_name[name], gt_by_name[name]) for name in sorted(pred_by_name.keys() & gt_by_name.keys())]
+
+    pred_by_stem = _unique_by_stem(pred_by_name.values(), "prediction")
+    gt_by_stem = _unique_by_stem(gt_by_name.values(), "ground-truth")
+    return [(pred_by_stem[stem], gt_by_stem[stem]) for stem in sorted(pred_by_stem.keys() & gt_by_stem.keys())]
+
+
+def _unique_by_stem(paths, label: str) -> dict[str, Path]:
+    by_stem: dict[str, Path] = {}
+    for path in paths:
+        key = path.stem
+        if key in by_stem:
+            raise DataValidationError(f"Duplicate {label} image stem: {key}")
+        by_stem[key] = path
+    return by_stem
 
 
 def _load_rgb(path: Path) -> np.ndarray:
@@ -108,12 +123,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pred", type=Path, required=True)
     parser.add_argument("--gt", type=Path, required=True)
     parser.add_argument("--out", type=Path, default=None, help="Optional JSON metrics output path.")
+    parser.add_argument("--match-by-stem", action="store_true", help="Match pred/gt images by filename stem, ignoring extension.")
     return parser
 
 
 def main() -> None:
     args = build_arg_parser().parse_args()
-    result = evaluate_directories(args.pred, args.gt)
+    result = evaluate_directories(args.pred, args.gt, match_by_stem=args.match_by_stem)
     payload = json.dumps(result, indent=2, allow_nan=True)
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)

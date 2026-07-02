@@ -1,10 +1,21 @@
 # BTS Digital Twin Novel View Synthesis Baseline
 
-This repository provides a practical baseline pipeline for posed drone-image
-novel view synthesis of BTS scenes. It prepares COLMAP/NeRF-style scene data for
-Nerfstudio, trains a 3D Gaussian Splatting model with `splatfacto`, renders RGB
-target views as PNG image sequences, and evaluates predictions against holdout
-ground truth when available.
+This repository provides a practical baseline pipeline for Viettel AI Race 2026
+VAR (`var-2026`), "BTS Digital Twin (Novel View Synthesis)". It prepares
+COLMAP/NeRF-style posed drone-image scenes for Nerfstudio, trains a 3D Gaussian
+Splatting model with `splatfacto`, renders RGB target views as PNG image
+sequences, evaluates predictions against holdout ground truth when available,
+and packages multi-scene predictions into a ZIP submission.
+
+The public contest description says each scene contains 100-300 RGB images with
+camera intrinsics/poses. The released phase1 data uses COLMAP sparse
+reconstructions under `train/sparse/0` and target poses under
+`test/test_poses.csv`; observed target counts range from 26-60 poses per scene.
+Public phase metadata lists `FILE_ZIP` submissions on `GPU` workers. The exact
+ZIP layout is still not stated in the public API, so the ZIP layout here is a
+conservative default: `scene_id/*.png`.
+
+Source: https://competition.viettel.vn/contests/var-2026
 
 ## Install
 
@@ -20,19 +31,33 @@ The local tests do not require Nerfstudio because this package treats
 
 Supported raw scene inputs:
 
+- Viettel/VAI phase1 scene layout:
+  - `train/images/`
+  - `train/sparse/0/{cameras,images,points3D}.bin`
+  - `test/test_poses.csv`
 - Nerfstudio/NeRF-style `train_cameras.json` or `transforms.json` plus `images/`.
 - COLMAP sparse reconstruction in `sparse/0`, `sparse`, or `colmap/sparse/0`
   plus `images/`.
 
 Target views use the same JSON camera schema as `transforms.json`.
 
+When a raw scene contains `target_cameras.json`, `prepare` validates and copies
+it to the processed scene. For VAI phase1 scenes, `prepare` converts
+`test/test_poses.csv` into `target_cameras.json`. Use `--strict-contest` to
+enforce the observed phase1 ranges:
+
+- 100-300 training images per scene.
+- 20-60 target cameras per scene, when target poses are present.
+
 ## Commands
 
 ```powershell
-python -m bts_nvs.prepare --scene raw_scene --out processed_scene
+python -m bts_nvs.prepare_dataset --root VAI_NVS_DATA/phase1/public_set --out processed/public_set --copy-mode hardlink --strict-contest
+python -m bts_nvs.prepare --scene raw_scene --out processed_scene --strict-contest
 python -m bts_nvs.train --scene processed_scene --preset fast
-python -m bts_nvs.render --checkpoint outputs/.../config.yml --targets target_cameras.json --out submission/scene_id
-python -m bts_nvs.evaluate --pred submission/scene_id --gt holdout_gt
+python -m bts_nvs.render --checkpoint outputs/.../config.yml --targets processed_scene/target_cameras.json --out submission/scene_id --strict-contest
+python -m bts_nvs.evaluate --pred submission/scene_id --gt VAI_NVS_DATA/phase1/public_set/scene_id/test/images --match-by-stem
+python -m bts_nvs.package --submission submission --out submission.zip
 ```
 
 For a dry run that prints the external command without running Nerfstudio:
@@ -41,3 +66,31 @@ For a dry run that prints the external command without running Nerfstudio:
 python -m bts_nvs.train --scene processed_scene --dry-run
 python -m bts_nvs.render --checkpoint outputs/.../config.yml --targets target_cameras.json --out submission/scene_id --dry-run
 ```
+
+## Submission Layout
+
+The package command writes only PNG files into the archive:
+
+```text
+submission.zip
+  scene_001/
+    target_000.png
+    target_001.png
+  scene_002/
+    target_000.png
+```
+
+This is an implementation assumption, not a confirmed official ZIP schema.
+Replace the packaging adapter once the registered dataset brief specifies exact
+filenames, folder names, or a required manifest.
+
+## VAI Phase1 Notes
+
+- `train/sparse/0/images.bin` can contain poses for images not present in
+  `train/images`; the converter filters COLMAP registered images to files that
+  actually exist in `train/images`.
+- `test_poses.csv` stores `tx,ty,tz` as world-space camera position according to
+  the released README. The adapter treats quaternion columns as OpenCV/COLMAP
+  camera rotation and converts to Nerfstudio/OpenGL camera-to-world matrices.
+- Rendered predictions are PNGs, while public ground-truth test images are JPGs;
+  use `--match-by-stem` for local public-set evaluation.

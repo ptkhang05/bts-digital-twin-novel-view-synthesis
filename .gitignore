@@ -10,8 +10,10 @@ dist/
 *.egg-info/
 outputs/
 data/
+VAI_NVS_DATA/
 processed/
 submission/
+submission*.zip
 renders/
 .env
 .env.*

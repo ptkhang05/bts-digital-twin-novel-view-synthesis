@@ -265,10 +265,17 @@ def camera_to_nerfstudio_intrinsics(camera: ColmapCamera) -> dict[str, float | i
     }
 
 
-def colmap_model_to_nerfstudio(scene: Path, model: ColmapModel) -> tuple[dict, list[ColmapPoint3D]]:
+def colmap_model_to_nerfstudio(
+    scene: Path,
+    model: ColmapModel,
+    image_names: set[str] | None = None,
+) -> tuple[dict, list[ColmapPoint3D]]:
     frames = []
     intrinsics_by_image: list[dict] = []
-    for image in sorted(model.images.values(), key=lambda item: item.image_id):
+    images = sorted(model.images.values(), key=lambda item: item.image_id)
+    if image_names is not None:
+        images = [image for image in images if Path(image.name).name in image_names]
+    for image in images:
         if image.camera_id not in model.cameras:
             raise DataValidationError(f"Image {image.name} references missing camera {image.camera_id}")
         camera = model.cameras[image.camera_id]
@@ -283,7 +290,7 @@ def colmap_model_to_nerfstudio(scene: Path, model: ColmapModel) -> tuple[dict, l
         frames.append(frame)
 
     if not frames:
-        raise DataValidationError("COLMAP model contains no registered images")
+        raise DataValidationError("COLMAP model contains no registered images with matching files")
 
     first_intrinsics = intrinsics_by_image[0]
     shared_keys = tuple(first_intrinsics.keys())
@@ -300,10 +307,13 @@ def colmap_model_to_nerfstudio(scene: Path, model: ColmapModel) -> tuple[dict, l
 def _colmap_image_relpath(scene: Path, image_name: str) -> Path:
     direct = scene / image_name
     under_images = scene / "images" / image_name
+    under_train_images = scene / "train" / "images" / image_name
     if direct.exists():
         return Path(image_name)
     if under_images.exists():
         return Path("images") / image_name
+    if under_train_images.exists():
+        return Path("images") / Path(image_name).name
     return Path("images") / Path(image_name).name
 
 

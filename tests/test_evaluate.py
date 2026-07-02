@@ -34,3 +34,17 @@ def test_evaluate_black_vs_white_image_has_zero_psnr_for_8bit_range(tmp_path: Pa
 
     assert result["mae"] == 255.0
     assert result["psnr"] == 0.0
+
+
+def test_evaluate_can_match_png_predictions_to_jpg_ground_truth_by_stem(tmp_path: Path):
+    pred = tmp_path / "pred"
+    gt = tmp_path / "gt"
+    pred.mkdir()
+    gt.mkdir()
+    Image.new("RGB", (4, 4), color=(0, 0, 0)).save(pred / "target_000.png")
+    Image.new("RGB", (4, 4), color=(0, 0, 0)).save(gt / "target_000.JPG")
+
+    result = evaluate_directories(pred, gt, match_by_stem=True)
+
+    assert result["count"] == 1
+    assert result["mae"] == 0.0

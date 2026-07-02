@@ -48,6 +48,17 @@ def opencv_w2c_to_nerfstudio_c2w(qvec: Iterable[float], tvec: Iterable[float]) -
     return c2w_opencv @ opencv_to_opengl
 
 
+def opencv_camera_center_to_nerfstudio_c2w(qvec: Iterable[float], camera_center: Iterable[float]) -> np.ndarray:
+    """Convert OpenCV camera rotation plus world-space camera center to Nerfstudio c2w."""
+    rot_w2c = qvec_to_rotmat(qvec)
+    center = _as_float_array(camera_center, (3,), "camera_center")
+    c2w_opencv = np.eye(4, dtype=np.float64)
+    c2w_opencv[:3, :3] = rot_w2c.T
+    c2w_opencv[:3, 3] = center
+    opencv_to_opengl = np.diag([1.0, -1.0, -1.0, 1.0])
+    return c2w_opencv @ opencv_to_opengl
+
+
 def validate_transform_matrix(matrix: Iterable[Iterable[float]], name: str = "transform_matrix") -> np.ndarray:
     array = _as_float_array(matrix, (4, 4), name)
     if not np.allclose(array[3], np.array([0.0, 0.0, 0.0, 1.0]), atol=1e-7):

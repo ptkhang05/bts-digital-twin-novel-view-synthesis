@@ -69,6 +69,7 @@ def resolve_frame_image(scene: Path, file_path: str) -> Path:
     candidates = [
         scene / candidate,
         scene / "images" / candidate.name,
+        scene / "train" / "images" / candidate.name,
     ]
     for path in candidates:
         if path.exists():

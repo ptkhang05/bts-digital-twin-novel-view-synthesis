@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from bts_nvs.colmap import colmap_model_to_nerfstudio, find_colmap_sparse_dir, read_colmap_model, write_ascii_ply
+from bts_nvs.contest import validate_target_view_count, validate_training_image_count
 from bts_nvs.exceptions import DataValidationError
 from bts_nvs.schema import (
     load_json,
@@ -14,6 +15,7 @@ from bts_nvs.schema import (
     validate_transforms,
     write_json,
 )
+from bts_nvs.vai import is_vai_phase1_scene, test_poses_csv_to_transforms, train_image_names
 
 
 @dataclass(frozen=True)
@@ -23,6 +25,8 @@ class PreparedScene:
     metadata_path: Path
     image_count: int
     source_format: str
+    target_cameras_path: Path | None = None
+    target_count: int | None = None
     point_count: int = 0
 
 
@@ -32,6 +36,7 @@ def prepare_scene(
     copy_mode: str = "copy",
     overwrite: bool = False,
     holdout_interval: int = 0,
+    strict_contest: bool = False,
 ) -> PreparedScene:
     scene_path = Path(scene)
     output_path = Path(output)
@@ -45,10 +50,13 @@ def prepare_scene(
 
     source_format, transforms, point_count = _load_scene_transforms(scene_path, output_path)
     transforms = validate_transforms(transforms, scene=scene_path)
+    if strict_contest:
+        validate_training_image_count(len(transforms["frames"]))
     _copy_images(scene_path, output_path, transforms, copy_mode=copy_mode)
     if holdout_interval:
         _apply_holdout_split(transforms, holdout_interval=holdout_interval)
     transforms = validate_transforms(transforms, scene=output_path)
+    target_cameras_path, target_count = _copy_target_cameras(scene_path, output_path, strict_contest=strict_contest)
 
     transforms_path = output_path / "transforms.json"
     metadata_path = output_path / "metadata.json"
@@ -60,6 +68,9 @@ def prepare_scene(
         "image_count": len(transforms["frames"]),
         "point_count": point_count,
     }
+    if target_count is not None:
+        metadata["target_count"] = target_count
+        metadata["target_cameras"] = "target_cameras.json"
     write_json(metadata_path, metadata)
     return PreparedScene(
         output_dir=output_path,
@@ -67,11 +78,24 @@ def prepare_scene(
         metadata_path=metadata_path,
         image_count=len(transforms["frames"]),
         source_format=source_format,
+        target_cameras_path=target_cameras_path,
+        target_count=target_count,
         point_count=point_count,
     )
 
 
 def _load_scene_transforms(scene: Path, output: Path) -> tuple[str, dict, int]:
+    if is_vai_phase1_scene(scene):
+        model = read_colmap_model(scene / "train" / "sparse" / "0")
+        transforms, points = colmap_model_to_nerfstudio(scene, model, image_names=train_image_names(scene))
+        if points:
+            ply_path = output / "sparse_pc.ply"
+            point_count = write_ascii_ply(points, ply_path)
+            transforms["ply_file_path"] = "sparse_pc.ply"
+        else:
+            point_count = 0
+        return "vai_phase1", transforms, point_count
+
     for filename in ("train_cameras.json", "transforms.json"):
         path = scene / filename
         if path.exists():
@@ -119,6 +143,22 @@ def _copy_images(scene: Path, output: Path, transforms: dict, copy_mode: str) ->
         frame["file_path"] = relpath.as_posix()
 
 
+def _copy_target_cameras(scene: Path, output: Path, strict_contest: bool) -> tuple[Path | None, int | None]:
+    target_path = scene / "target_cameras.json"
+    if target_path.exists():
+        targets = validate_transforms(load_json(target_path))
+    elif (scene / "test" / "test_poses.csv").exists():
+        targets = validate_transforms(test_poses_csv_to_transforms(scene / "test" / "test_poses.csv"))
+    else:
+        return None, None
+    target_count = len(targets["frames"])
+    if strict_contest:
+        validate_target_view_count(target_count)
+    output_path = output / "target_cameras.json"
+    write_json(output_path, targets)
+    return output_path, target_count
+
+
 def _apply_holdout_split(transforms: dict, holdout_interval: int) -> None:
     if holdout_interval <= 1:
         raise DataValidationError("holdout_interval must be greater than 1")
@@ -151,6 +191,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Optional filename split: every Nth frame becomes val/test, the rest train.",
     )
     parser.add_argument("--overwrite", action="store_true", help="Replace a non-empty output directory.")
+    parser.add_argument(
+        "--strict-contest",
+        action="store_true",
+        help="Enforce public Viettel AI Race scene size constraints: 100-300 train images, 20-50 targets if present.",
+    )
     return parser
 
 
@@ -162,6 +207,7 @@ def main() -> None:
         copy_mode=args.copy_mode,
         overwrite=args.overwrite,
         holdout_interval=args.holdout_interval,
+        strict_contest=args.strict_contest,
     )
     print(f"Wrote {result.transforms_path} with {result.image_count} frames")
 
