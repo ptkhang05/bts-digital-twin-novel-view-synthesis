@@ -52,7 +52,7 @@ def render_nearest_dataset(
     image_format: str = "auto",
     jpeg_quality: int = 92,
     selection_mode: str = "temporal-blend",
-    blend_weight_policy: str = "midpoint",
+    blend_weight_policy: str = "linear",
 ) -> NearestViewSubmission:
     root_path = Path(root)
     output_path = Path(output)
@@ -79,7 +79,7 @@ def render_nearest_scene(
     image_format: str = "auto",
     jpeg_quality: int = 92,
     selection_mode: str = "temporal-blend",
-    blend_weight_policy: str = "midpoint",
+    blend_weight_policy: str = "linear",
 ) -> int:
     _validate_output_options(
         name_policy=name_policy,
@@ -406,8 +406,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--blend-weight-policy",
         choices=tuple(sorted(BLEND_WEIGHT_POLICIES)),
-        default="midpoint",
-        help="Weighting used by temporal-blend. midpoint is the public-set tuned fallback.",
+        default="linear",
+        help="Weighting used by temporal-blend. linear is the best private-set fallback observed so far.",
     )
     return parser
 

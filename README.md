@@ -70,7 +70,7 @@ If no trained Nerfstudio checkpoint is available yet, create a low-cost
 submission smoke test with temporal blending between adjacent drone frames:
 
 ```powershell
-python -m bts_nvs.nearest_view --root VAI_NVS_DATA/phase1/private_set1 --out submission/temporal_blend_private_set1 --selection-mode temporal-blend --blend-weight-policy midpoint --jpeg-quality 95
+python -m bts_nvs.nearest_view --root VAI_NVS_DATA/phase1/private_set1 --out submission/temporal_blend_private_set1 --selection-mode temporal-blend --blend-weight-policy linear --jpeg-quality 95
 python -m bts_nvs.package --submission submission/temporal_blend_private_set1 --out submission_round1.zip
 ```
 
@@ -124,10 +124,12 @@ round-specific adapter says otherwise.
   evaluator may mark images missing even when scene directories match.
 - The low-cost fallback supports `--selection-mode nearest-pose`,
   `--selection-mode temporal-nearest`, and `--selection-mode temporal-blend`.
-  `temporal-blend` defaults to `--blend-weight-policy midpoint`, which was
-  slightly stronger than linear frame-ratio blending on the released public set.
+  `temporal-blend` defaults to `--blend-weight-policy linear`, which is the
+  strongest private-set fallback observed so far. `midpoint` had slightly
+  higher local public-set PSNR, but the private leaderboard score was lower
+  because SSIM/LPIPS regressed.
   On the released public set, temporal blend improved internal PSNR from about
-  9.22 dB for pose-nearest copying to about 11.00 dB for midpoint blending.
+  9.22 dB for pose-nearest copying to about 10.95 dB for linear blending.
   This is local validation, not a guaranteed private-set score.
 - When SSIM and LPIPS dependencies are installed, `evaluate` also reports BTC's
   aggregate score: `0.4 * (1 - LPIPS) + 0.3 * SSIM + 0.3 * psnr_norm`, where

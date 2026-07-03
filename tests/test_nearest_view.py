@@ -142,7 +142,7 @@ def test_render_nearest_dataset_temporal_blend_uses_bracketing_frame_indices(tmp
         assert 120 <= blue <= 135
 
 
-def test_render_nearest_dataset_temporal_blend_defaults_to_midpoint_weight(tmp_path: Path):
+def test_render_nearest_dataset_temporal_blend_defaults_to_linear_frame_weight(tmp_path: Path):
     root = tmp_path / "private_set1"
     _write_temporal_gap_scene(root / "scene_a")
 
@@ -151,12 +151,12 @@ def test_render_nearest_dataset_temporal_blend_defaults_to_midpoint_weight(tmp_p
     output = tmp_path / "submission" / "scene_a" / "DJI_20250101000002_0002_V.png"
     with Image.open(output) as image:
         red, green, blue = image.getpixel((0, 0))
-        assert 120 <= red <= 135
+        assert 165 <= red <= 175
         assert green == 0
-        assert 120 <= blue <= 135
+        assert 80 <= blue <= 90
 
 
-def test_render_nearest_dataset_temporal_blend_can_use_linear_frame_weight(tmp_path: Path):
+def test_render_nearest_dataset_temporal_blend_can_use_midpoint_weight(tmp_path: Path):
     root = tmp_path / "private_set1"
     _write_temporal_gap_scene(root / "scene_a")
 
@@ -164,12 +164,12 @@ def test_render_nearest_dataset_temporal_blend_can_use_linear_frame_weight(tmp_p
         root=root,
         output=tmp_path / "submission",
         selection_mode="temporal-blend",
-        blend_weight_policy="linear",
+        blend_weight_policy="midpoint",
     )
 
     output = tmp_path / "submission" / "scene_a" / "DJI_20250101000002_0002_V.png"
     with Image.open(output) as image:
         red, green, blue = image.getpixel((0, 0))
-        assert 165 <= red <= 175
+        assert 120 <= red <= 135
         assert green == 0
-        assert 80 <= blue <= 90
+        assert 120 <= blue <= 135
