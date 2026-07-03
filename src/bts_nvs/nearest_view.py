@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,6 +17,9 @@ from bts_nvs.vai import TEST_POSE_COLUMNS, discover_vai_phase1_scenes, train_ima
 JPEG_SUFFIXES = {".jpg", ".jpeg"}
 IMAGE_FORMATS = {"auto", "jpeg", "png"}
 NAME_POLICIES = {"exact", "png"}
+SELECTION_MODES = {"nearest-pose", "temporal-nearest", "temporal-blend"}
+BLEND_WEIGHT_POLICIES = {"linear", "midpoint", "gamma0.5"}
+FRAME_INDEX_PATTERN = re.compile(r"_(\d+)_V\.[^.]+$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -29,8 +33,16 @@ class NearestViewSubmission:
 class TargetPose:
     image_name: str
     camera_center: np.ndarray
+    frame_index: int | None
     width: int
     height: int
+
+
+@dataclass(frozen=True)
+class TrainView:
+    image_path: Path
+    camera_center: np.ndarray
+    frame_index: int | None
 
 
 def render_nearest_dataset(
@@ -39,6 +51,8 @@ def render_nearest_dataset(
     name_policy: str = "exact",
     image_format: str = "auto",
     jpeg_quality: int = 92,
+    selection_mode: str = "temporal-blend",
+    blend_weight_policy: str = "midpoint",
 ) -> NearestViewSubmission:
     root_path = Path(root)
     output_path = Path(output)
@@ -51,6 +65,8 @@ def render_nearest_dataset(
             name_policy=name_policy,
             image_format=image_format,
             jpeg_quality=jpeg_quality,
+            selection_mode=selection_mode,
+            blend_weight_policy=blend_weight_policy,
         )
         scene_count += 1
     return NearestViewSubmission(output_path, scene_count=scene_count, image_count=image_count)
@@ -62,8 +78,16 @@ def render_nearest_scene(
     name_policy: str = "exact",
     image_format: str = "auto",
     jpeg_quality: int = 92,
+    selection_mode: str = "temporal-blend",
+    blend_weight_policy: str = "midpoint",
 ) -> int:
-    _validate_output_options(name_policy=name_policy, image_format=image_format, jpeg_quality=jpeg_quality)
+    _validate_output_options(
+        name_policy=name_policy,
+        image_format=image_format,
+        jpeg_quality=jpeg_quality,
+        selection_mode=selection_mode,
+        blend_weight_policy=blend_weight_policy,
+    )
     scene_path = Path(scene)
     output_path = Path(output)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -71,7 +95,7 @@ def render_nearest_scene(
         if stale_image.is_file() and stale_image.suffix.lower() in {".png", ".jpg", ".jpeg"}:
             stale_image.unlink()
 
-    train_centers = _read_train_camera_centers(scene_path)
+    train_views = _read_train_views(scene_path)
     targets = _read_target_poses(scene_path / "test" / "test_poses.csv")
     seen_outputs: set[str] = set()
     for target in targets:
@@ -79,23 +103,23 @@ def render_nearest_scene(
         if output_name in seen_outputs:
             raise DataValidationError(f"Duplicate target output name after policy conversion: {output_name}")
         seen_outputs.add(output_name)
-        source_image = _nearest_train_image(train_centers, target.camera_center)
-        _write_resized_image(
-            source_image,
+        _write_selected_prediction(
+            train_views,
+            target,
             output_path / output_name,
-            width=target.width,
-            height=target.height,
+            selection_mode=selection_mode,
+            blend_weight_policy=blend_weight_policy,
             image_format=image_format,
             jpeg_quality=jpeg_quality,
         )
     return len(targets)
 
 
-def _read_train_camera_centers(scene: Path) -> dict[Path, np.ndarray]:
+def _read_train_views(scene: Path) -> list[TrainView]:
     model = read_colmap_model(scene / "train" / "sparse" / "0")
     available_names = train_image_names(scene)
     image_dir = scene / "train" / "images"
-    centers: dict[Path, np.ndarray] = {}
+    views: list[TrainView] = []
     for image in model.images.values():
         image_name = Path(image.name).name
         if image_name not in available_names:
@@ -103,10 +127,16 @@ def _read_train_camera_centers(scene: Path) -> dict[Path, np.ndarray]:
         rotation = qvec_to_rotmat(image.qvec)
         tvec = np.asarray(image.tvec, dtype=float)
         center = -rotation.T @ tvec
-        centers[image_dir / image_name] = center
-    if not centers:
+        views.append(
+            TrainView(
+                image_path=image_dir / image_name,
+                camera_center=center,
+                frame_index=_extract_frame_index(image_name),
+            )
+        )
+    if not views:
         raise DataValidationError(f"No COLMAP train image poses matched files in {image_dir}")
-    return centers
+    return sorted(views, key=lambda view: (view.frame_index is None, view.frame_index or 0, view.image_path.name))
 
 
 def _read_target_poses(path: Path) -> list[TargetPose]:
@@ -135,6 +165,7 @@ def _read_target_poses(path: Path) -> list[TargetPose]:
                         ],
                         dtype=float,
                     ),
+                    frame_index=_extract_frame_index(image_name),
                     width=width,
                     height=height,
                 )
@@ -144,8 +175,88 @@ def _read_target_poses(path: Path) -> list[TargetPose]:
     return targets
 
 
-def _nearest_train_image(train_centers: dict[Path, np.ndarray], target_center: np.ndarray) -> Path:
-    return min(train_centers, key=lambda image_path: float(np.linalg.norm(train_centers[image_path] - target_center)))
+def _write_selected_prediction(
+    train_views: list[TrainView],
+    target: TargetPose,
+    destination: Path,
+    selection_mode: str,
+    blend_weight_policy: str,
+    image_format: str,
+    jpeg_quality: int,
+) -> None:
+    if selection_mode == "temporal-blend":
+        low_view, high_view = _bracketing_train_views(train_views, target)
+        if low_view is not None and high_view is not None and low_view.image_path != high_view.image_path:
+            _write_blended_images(
+                low_view,
+                high_view,
+                target,
+                destination,
+                blend_weight_policy=blend_weight_policy,
+                image_format=image_format,
+                jpeg_quality=jpeg_quality,
+            )
+            return
+
+    source_view = _select_train_view(train_views, target, selection_mode=selection_mode)
+    _write_resized_image(
+        source_view.image_path,
+        destination,
+        width=target.width,
+        height=target.height,
+        image_format=image_format,
+        jpeg_quality=jpeg_quality,
+    )
+
+
+def _select_train_view(train_views: list[TrainView], target: TargetPose, selection_mode: str) -> TrainView:
+    if selection_mode in {"temporal-nearest", "temporal-blend"} and target.frame_index is not None:
+        indexed_views = [view for view in train_views if view.frame_index is not None]
+        if indexed_views:
+            return min(
+                indexed_views,
+                key=lambda view: (
+                    abs((view.frame_index or 0) - target.frame_index),
+                    0 if (view.frame_index or 0) >= target.frame_index else 1,
+                    view.image_path.name,
+                ),
+            )
+    return _nearest_pose_train_view(train_views, target.camera_center)
+
+
+def _bracketing_train_views(
+    train_views: list[TrainView],
+    target: TargetPose,
+) -> tuple[TrainView | None, TrainView | None]:
+    if target.frame_index is None:
+        return None, None
+    indexed_views = [view for view in train_views if view.frame_index is not None]
+    if not indexed_views:
+        return None, None
+    low_candidates = [view for view in indexed_views if (view.frame_index or 0) <= target.frame_index]
+    high_candidates = [view for view in indexed_views if (view.frame_index or 0) >= target.frame_index]
+    low_view = max(low_candidates, key=lambda view: (view.frame_index or 0, view.image_path.name)) if low_candidates else None
+    high_view = min(high_candidates, key=lambda view: (view.frame_index or 0, view.image_path.name)) if high_candidates else None
+    if low_view is None:
+        low_view = high_view
+    if high_view is None:
+        high_view = low_view
+    return low_view, high_view
+
+
+def _nearest_pose_train_view(train_views: list[TrainView], target_center: np.ndarray) -> TrainView:
+    return min(train_views, key=lambda view: float(np.linalg.norm(view.camera_center - target_center)))
+
+
+def _extract_frame_index(image_name: str) -> int | None:
+    name = Path(image_name).name
+    match = FRAME_INDEX_PATTERN.search(name)
+    if match:
+        return int(match.group(1))
+    numbers = re.findall(r"\d+", Path(name).stem)
+    if not numbers:
+        return None
+    return int(numbers[-1])
 
 
 def _target_output_name(image_name: str, name_policy: str) -> str:
@@ -178,6 +289,51 @@ def _write_resized_image(
             raise DataValidationError(f"Unsupported output image format: {image_format}")
 
 
+def _write_blended_images(
+    low_view: TrainView,
+    high_view: TrainView,
+    target: TargetPose,
+    destination: Path,
+    blend_weight_policy: str,
+    image_format: str,
+    jpeg_quality: int,
+) -> None:
+    if low_view.frame_index is None or high_view.frame_index is None or target.frame_index is None:
+        raise DataValidationError("Temporal blending requires frame indices for low, high, and target images")
+    denominator = high_view.frame_index - low_view.frame_index
+    linear_alpha = 0.0 if denominator == 0 else (target.frame_index - low_view.frame_index) / denominator
+    alpha = _resolve_blend_alpha(linear_alpha, blend_weight_policy=blend_weight_policy)
+    with Image.open(low_view.image_path) as low_image, Image.open(high_view.image_path) as high_image:
+        low_rgb = low_image.convert("RGB")
+        high_rgb = high_image.convert("RGB")
+        target_size = (target.width, target.height)
+        if low_rgb.size != target_size:
+            low_rgb = low_rgb.resize(target_size, Image.Resampling.LANCZOS)
+        if high_rgb.size != target_size:
+            high_rgb = high_rgb.resize(target_size, Image.Resampling.LANCZOS)
+        blended = Image.blend(low_rgb, high_rgb, alpha=alpha)
+        resolved_format = _resolve_image_format(destination, image_format=image_format)
+        if resolved_format == "jpeg":
+            blended.save(destination, format="JPEG", quality=jpeg_quality, optimize=True, progressive=False)
+        elif resolved_format == "png":
+            blended.save(destination, format="PNG", optimize=True, compress_level=9)
+        else:
+            raise DataValidationError(f"Unsupported output image format: {image_format}")
+
+
+def _resolve_blend_alpha(linear_alpha: float, blend_weight_policy: str) -> float:
+    linear_alpha = max(0.0, min(float(linear_alpha), 1.0))
+    if blend_weight_policy == "linear":
+        return linear_alpha
+    if blend_weight_policy == "midpoint":
+        return 0.5
+    if blend_weight_policy == "gamma0.5":
+        low_weight = max(1.0 - linear_alpha, 1e-6) ** 0.5
+        high_weight = max(linear_alpha, 1e-6) ** 0.5
+        return high_weight / (low_weight + high_weight)
+    raise DataValidationError(f"Unsupported blend weight policy: {blend_weight_policy}")
+
+
 def _resolve_image_format(destination: Path, image_format: str) -> str:
     if image_format != "auto":
         return image_format
@@ -186,11 +342,21 @@ def _resolve_image_format(destination: Path, image_format: str) -> str:
     return "png"
 
 
-def _validate_output_options(name_policy: str, image_format: str, jpeg_quality: int) -> None:
+def _validate_output_options(
+    name_policy: str,
+    image_format: str,
+    jpeg_quality: int,
+    selection_mode: str,
+    blend_weight_policy: str,
+) -> None:
     if name_policy not in NAME_POLICIES:
         raise DataValidationError(f"Unsupported name policy: {name_policy}")
     if image_format not in IMAGE_FORMATS:
         raise DataValidationError(f"Unsupported image format: {image_format}")
+    if selection_mode not in SELECTION_MODES:
+        raise DataValidationError(f"Unsupported selection mode: {selection_mode}")
+    if blend_weight_policy not in BLEND_WEIGHT_POLICIES:
+        raise DataValidationError(f"Unsupported blend weight policy: {blend_weight_policy}")
     if jpeg_quality < 1 or jpeg_quality > 100:
         raise DataValidationError("jpeg_quality must be between 1 and 100")
 
@@ -231,6 +397,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Output encoding. auto writes JPEG for .jpg/.jpeg names and PNG otherwise.",
     )
     parser.add_argument("--jpeg-quality", type=int, default=92, help="JPEG quality for JPEG outputs.")
+    parser.add_argument(
+        "--selection-mode",
+        choices=tuple(sorted(SELECTION_MODES)),
+        default="temporal-blend",
+        help="How to choose train images: pose nearest, temporal nearest, or temporal interpolation.",
+    )
+    parser.add_argument(
+        "--blend-weight-policy",
+        choices=tuple(sorted(BLEND_WEIGHT_POLICIES)),
+        default="midpoint",
+        help="Weighting used by temporal-blend. midpoint is the public-set tuned fallback.",
+    )
     return parser
 
 
@@ -242,6 +420,8 @@ def main() -> None:
         name_policy=args.name_policy,
         image_format=args.image_format,
         jpeg_quality=args.jpeg_quality,
+        selection_mode=args.selection_mode,
+        blend_weight_policy=args.blend_weight_policy,
     )
     print(f"Wrote {result.output_dir} with {result.image_count} images from {result.scene_count} scenes")
 

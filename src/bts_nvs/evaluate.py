@@ -115,7 +115,11 @@ def _try_compute_ssim(pairs: list[tuple[Path, Path]]) -> float | None:
     for pred_path, gt_path in pairs:
         pred = _load_rgb(pred_path)
         gt = _load_rgb(gt_path)
-        scores.append(float(structural_similarity(gt, pred, channel_axis=2, data_range=255)))
+        min_side = min(pred.shape[0], pred.shape[1], gt.shape[0], gt.shape[1])
+        if min_side < 3:
+            return None
+        win_size = min(7, min_side if min_side % 2 == 1 else min_side - 1)
+        scores.append(float(structural_similarity(gt, pred, channel_axis=2, data_range=255, win_size=win_size)))
     return float(np.mean(scores))
 
 
