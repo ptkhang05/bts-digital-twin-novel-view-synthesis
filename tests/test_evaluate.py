@@ -50,6 +50,19 @@ def test_evaluate_can_match_png_predictions_to_jpg_ground_truth_by_stem(tmp_path
     assert result["mae"] == 0.0
 
 
+def test_evaluate_skips_lpips_for_tiny_images(tmp_path: Path):
+    pred = tmp_path / "pred"
+    gt = tmp_path / "gt"
+    pred.mkdir()
+    gt.mkdir()
+    Image.new("RGB", (4, 4), color=(0, 0, 0)).save(pred / "a.png")
+    Image.new("RGB", (4, 4), color=(0, 0, 0)).save(gt / "a.png")
+
+    result = evaluate_directories(pred, gt)
+
+    assert "lpips" not in result
+
+
 def test_normalize_psnr_clamps_to_unit_interval():
     assert normalize_psnr(-1.0, psnr_max=40.0) == 0.0
     assert normalize_psnr(20.0, psnr_max=40.0) == 0.5

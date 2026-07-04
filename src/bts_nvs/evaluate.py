@@ -13,6 +13,7 @@ from bts_nvs.exceptions import DataValidationError
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg"}
 DEFAULT_PSNR_MAX = 40.0
+MIN_LPIPS_IMAGE_SIDE = 32
 
 
 def evaluate_directories(
@@ -124,6 +125,9 @@ def _try_compute_ssim(pairs: list[tuple[Path, Path]]) -> float | None:
 
 
 def _try_compute_lpips(pairs: list[tuple[Path, Path]]) -> float | None:
+    if not _pairs_are_large_enough_for_lpips(pairs):
+        return None
+
     try:
         import lpips
         import torch
@@ -141,6 +145,16 @@ def _try_compute_lpips(pairs: list[tuple[Path, Path]]) -> float | None:
             gt_tensor = _image_to_lpips_tensor(gt, torch, device)
             scores.append(float(loss_fn(pred_tensor, gt_tensor).item()))
     return float(np.mean(scores))
+
+
+def _pairs_are_large_enough_for_lpips(pairs: list[tuple[Path, Path]]) -> bool:
+    for pred_path, gt_path in pairs:
+        pred = _load_rgb(pred_path)
+        gt = _load_rgb(gt_path)
+        min_side = min(pred.shape[0], pred.shape[1], gt.shape[0], gt.shape[1])
+        if min_side < MIN_LPIPS_IMAGE_SIDE:
+            return False
+    return True
 
 
 def _image_to_lpips_tensor(image: np.ndarray, torch_module, device: str):
