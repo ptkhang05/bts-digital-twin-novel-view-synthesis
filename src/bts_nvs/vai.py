@@ -4,7 +4,7 @@ import csv
 from pathlib import Path
 from typing import Any
 
-from bts_nvs.camera import opencv_camera_center_to_nerfstudio_c2w
+from bts_nvs.camera import opencv_w2c_to_nerfstudio_c2w
 from bts_nvs.exceptions import DataValidationError
 
 TEST_POSE_COLUMNS = (
@@ -71,10 +71,10 @@ def _test_pose_row_to_frame(row: dict[str, str], row_index: int) -> dict[str, An
     if not image_name:
         raise DataValidationError(f"Missing image_name in test_poses.csv row {row_index}")
     qvec = [_float(row, key, row_index) for key in ("qw", "qx", "qy", "qz")]
-    camera_center = [_float(row, key, row_index) for key in ("tx", "ty", "tz")]
+    tvec = [_float(row, key, row_index) for key in ("tx", "ty", "tz")]
     return {
         "file_path": image_name,
-        "transform_matrix": opencv_camera_center_to_nerfstudio_c2w(qvec, camera_center).tolist(),
+        "transform_matrix": opencv_w2c_to_nerfstudio_c2w(qvec, tvec).tolist(),
         "fl_x": _float(row, "fx", row_index),
         "fl_y": _float(row, "fy", row_index),
         "cx": _float(row, "cx", row_index),

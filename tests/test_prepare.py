@@ -145,7 +145,7 @@ def test_prepare_scene_supports_vai_phase1_layout_and_filters_sparse_images(tmp_
     assert [frame["file_path"] for frame in transforms["frames"]] == ["images/keep.png"]
     assert result.target_count == 1
     assert targets["frames"][0]["file_path"] == "target.JPG"
-    assert targets["frames"][0]["transform_matrix"][0][3] == 1.0
+    assert targets["frames"][0]["transform_matrix"][0][3] == -1.0
 
 
 def test_prepare_scene_can_write_filename_holdout_split(tmp_path: Path):

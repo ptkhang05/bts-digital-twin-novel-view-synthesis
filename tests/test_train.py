@@ -21,6 +21,33 @@ def test_build_train_command_uses_splatfacto_big_for_quality_preset(tmp_path: Pa
     assert str(tmp_path / "outputs") in command
 
 
+def test_build_train_command_can_disable_nerfstudio_pose_normalization(tmp_path: Path):
+    scene = tmp_path / "processed"
+
+    command = build_train_command(
+        scene=scene,
+        preset="fast",
+        extra_args=["--max-num-iterations", "5000"],
+        disable_pose_normalization=True,
+    )
+
+    assert command == [
+        "ns-train",
+        "splatfacto",
+        "--max-num-iterations",
+        "5000",
+        "nerfstudio-data",
+        "--data",
+        str(scene),
+        "--orientation-method",
+        "none",
+        "--center-method",
+        "none",
+        "--auto-scale-poses",
+        "False",
+    ]
+
+
 def test_default_train_log_path_writes_inside_processed_scene(tmp_path: Path):
     scene = tmp_path / "processed_scene"
 

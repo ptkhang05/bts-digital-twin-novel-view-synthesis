@@ -20,6 +20,7 @@ def build_train_command(
     output_dir: Path | str | None = None,
     experiment_name: str | None = None,
     extra_args: list[str] | None = None,
+    disable_pose_normalization: bool = False,
 ) -> list[str]:
     if preset not in PRESETS:
         raise ValueError(f"Unknown preset '{preset}'. Expected one of: {', '.join(PRESETS)}")
@@ -28,9 +29,24 @@ def build_train_command(
         command.extend(["--output-dir", str(output_dir)])
     if experiment_name is not None:
         command.extend(["--experiment-name", experiment_name])
-    command.extend(["--data", str(scene)])
     if extra_args:
         command.extend(extra_args)
+    if disable_pose_normalization:
+        command.extend(
+            [
+                "nerfstudio-data",
+                "--data",
+                str(scene),
+                "--orientation-method",
+                "none",
+                "--center-method",
+                "none",
+                "--auto-scale-poses",
+                "False",
+            ]
+        )
+    else:
+        command.extend(["--data", str(scene)])
     return command
 
 
@@ -97,6 +113,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Path for captured ns-train output. Defaults to <scene>/training.log.",
     )
     parser.add_argument("--dry-run", action="store_true", help="Print the command without running it.")
+    parser.add_argument(
+        "--disable-pose-normalization",
+        action="store_true",
+        help="Use nerfstudio-data with orientation/centering/auto-scale disabled. "
+        "Use this when target cameras are already in the same COLMAP coordinate frame as training poses.",
+    )
     parser.add_argument("extra_args", nargs=argparse.REMAINDER, help="Extra args passed after -- to ns-train.")
     return parser
 
@@ -112,6 +134,7 @@ def main() -> None:
         output_dir=args.output_dir,
         experiment_name=args.experiment_name,
         extra_args=extra_args,
+        disable_pose_normalization=args.disable_pose_normalization,
     )
     if args.dry_run:
         print(" ".join(command))

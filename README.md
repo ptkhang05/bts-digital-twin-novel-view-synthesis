@@ -61,6 +61,7 @@ it to the processed scene. For VAI phase1 scenes, `prepare` converts
 python -m bts_nvs.prepare_dataset --root VAI_NVS_DATA/phase1/public_set --out processed/public_set --copy-mode hardlink --strict-contest
 python -m bts_nvs.prepare --scene raw_scene --out processed_scene --strict-contest
 python -m bts_nvs.train --scene processed_scene --preset fast
+python -m bts_nvs.train --scene processed_scene --preset fast --disable-pose-normalization -- --viewer.quit-on-train-completion True
 python -m bts_nvs.render --checkpoint outputs/.../config.yml --targets processed_scene/target_cameras.json --out submission/scene_id --strict-contest
 python -m bts_nvs.evaluate --pred submission/scene_id --gt VAI_NVS_DATA/phase1/public_set/scene_id/test/images --match-by-stem --psnr-max 40
 python -m bts_nvs.package --submission submission --out submission.zip
@@ -116,9 +117,16 @@ round-specific adapter says otherwise.
 - `train/sparse/0/images.bin` can contain poses for images not present in
   `train/images`; the converter filters COLMAP registered images to files that
   actually exist in `train/images`.
-- `test_poses.csv` stores `tx,ty,tz` as world-space camera position according to
-  the released README. The adapter treats quaternion columns as OpenCV/COLMAP
-  camera rotation and converts to Nerfstudio/OpenGL camera-to-world matrices.
+- `test_poses.csv` labels `tx,ty,tz` as camera translation. Earlier versions of
+  this repo treated those values as a world-space camera center, but a public
+  probe on `hcm0031` showed the COLMAP/OpenCV `tvec` interpretation was much
+  better for Nerfstudio rendering. The adapter now converts `qw,qx,qy,qz` plus
+  `tx,ty,tz` as an OpenCV world-to-camera pose into Nerfstudio/OpenGL
+  camera-to-world matrices.
+- Nerfstudio's default dataparser recenters, orients, and rescales poses. When
+  rendering BTC target poses that are already in the same COLMAP coordinate
+  frame, train with `--disable-pose-normalization` so target camera paths stay
+  in the same frame as the trained model.
 - Rendered predictions from Nerfstudio are PNGs by default, while phase1 target
   filenames are often `.JPG`. Preserve exact target names for submission, or the
   evaluator may mark images missing even when scene directories match.
