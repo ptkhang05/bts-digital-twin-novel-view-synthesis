@@ -4,11 +4,17 @@ import argparse
 import shutil
 from pathlib import Path
 
+from PIL import Image
+
 from bts_nvs.camera import compute_vertical_fov_degrees
 from bts_nvs.contest import DEFAULT_CONTEST_PHASE, validate_target_view_count
 from bts_nvs.exceptions import DataValidationError
 from bts_nvs.schema import frame_intrinsics, load_json, validate_transforms, write_json
 from bts_nvs.train import run_external_command
+
+JPEG_SUFFIXES = {".jpg", ".jpeg"}
+PNG_SUFFIXES = {".png"}
+SUBMISSION_IMAGE_SUFFIXES = JPEG_SUFFIXES | PNG_SUFFIXES
 
 
 def build_camera_path(
@@ -29,10 +35,7 @@ def build_camera_path(
         height = int(intrinsics["h"])
         if width != int(first_intrinsics["w"]) or height != int(first_intrinsics["h"]):
             raise DataValidationError("All target cameras must share render width/height for one image-sequence render")
-        name = Path(frame.get("file_path") or f"{index:05d}.png").name
-        if not name.lower().endswith(".png"):
-            name = f"{Path(name).stem}.png"
-        names.append(name)
+        names.append(Path(frame.get("file_path") or f"{index:05d}.png").name)
         camera_entries.append(
             {
                 "camera_to_world": frame["transform_matrix"],
@@ -85,6 +88,7 @@ def render_targets(
 ) -> list[str]:
     output_dir = Path(output)
     output_dir.mkdir(parents=True, exist_ok=True)
+    _remove_stale_submission_images(output_dir)
     camera_path, target_names = build_camera_path(targets, strict_contest=strict_contest, contest_phase=contest_phase)
     camera_path_file = output_dir / "camera_path.json"
     nerfstudio_output = output_dir / "targets"
@@ -105,7 +109,25 @@ def _rename_rendered_images(render_dir: Path, output_dir: Path, target_names: li
         destination = output_dir / target_name
         if destination.resolve() == source.resolve():
             continue
+        _write_submission_image(source, destination)
+
+
+def _remove_stale_submission_images(output_dir: Path) -> None:
+    for path in output_dir.iterdir():
+        if path.is_file() and path.suffix.lower() in SUBMISSION_IMAGE_SUFFIXES:
+            path.unlink()
+
+
+def _write_submission_image(source: Path, destination: Path) -> None:
+    suffix = destination.suffix.lower()
+    if suffix in PNG_SUFFIXES:
         shutil.copy2(source, destination)
+        return
+    if suffix in JPEG_SUFFIXES:
+        with Image.open(source) as image:
+            image.convert("RGB").save(destination, format="JPEG", quality=95, optimize=True, progressive=False)
+        return
+    raise DataValidationError(f"Unsupported target image extension for submission render: {destination.name}")
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

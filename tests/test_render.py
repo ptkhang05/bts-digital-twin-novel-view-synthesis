@@ -2,9 +2,10 @@ import json
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from bts_nvs.exceptions import DataValidationError
-from bts_nvs.render import build_camera_path, build_render_command, rendered_image_directory
+from bts_nvs.render import build_camera_path, build_render_command, rendered_image_directory, _rename_rendered_images
 
 
 def test_build_camera_path_converts_target_transforms_to_nerfstudio_camera_path(tmp_path: Path):
@@ -38,6 +39,35 @@ def test_build_camera_path_converts_target_transforms_to_nerfstudio_camera_path(
     assert camera_path["render_height"] == 12
     assert camera_path["camera_path"][0]["camera_to_world"] == targets["frames"][0]["transform_matrix"]
     assert camera_path["camera_path"][0]["fov"] > 0
+
+
+def test_build_camera_path_preserves_exact_non_png_target_names(tmp_path: Path):
+    targets = {
+        "camera_model": "OPENCV",
+        "fl_x": 10.0,
+        "fl_y": 10.0,
+        "cx": 8.0,
+        "cy": 6.0,
+        "w": 16,
+        "h": 12,
+        "frames": [
+            {
+                "file_path": "test/images/HCM0249_0042_V.JPG",
+                "transform_matrix": [
+                    [1, 0, 0, 0],
+                    [0, 1, 0, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1],
+                ],
+            }
+        ],
+    }
+    target_file = tmp_path / "target_cameras.json"
+    target_file.write_text(json.dumps(targets), encoding="utf-8")
+
+    _, names = build_camera_path(target_file)
+
+    assert names == ["HCM0249_0042_V.JPG"]
 
 
 def test_build_camera_path_strict_contest_rejects_too_few_targets(tmp_path: Path):
@@ -86,3 +116,20 @@ def test_rendered_image_directory_matches_nerfstudio_image_output_rule(tmp_path:
     output_path = tmp_path / "submission" / "targets"
 
     assert rendered_image_directory(output_path) == output_path
+
+
+def test_rename_rendered_images_encodes_jpeg_when_target_name_is_jpg(tmp_path: Path):
+    render_dir = tmp_path / "renders"
+    output_dir = tmp_path / "submission"
+    render_dir.mkdir()
+    output_dir.mkdir()
+    Image.new("RGB", (4, 3), color=(200, 10, 30)).save(render_dir / "00000.png")
+
+    _rename_rendered_images(render_dir, output_dir, ["HCM0249_0042_V.JPG"])
+
+    output = output_dir / "HCM0249_0042_V.JPG"
+    assert output.exists()
+    with Image.open(output) as image:
+        assert image.format == "JPEG"
+        assert image.mode == "RGB"
+        assert image.size == (4, 3)
