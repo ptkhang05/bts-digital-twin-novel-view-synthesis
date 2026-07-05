@@ -24,6 +24,8 @@ TEST_POSE_COLUMNS = (
     "height",
 )
 
+TEST_POSE_FILENAMES = ("test_poses.csv", "test_pose.csv")
+
 
 def is_vai_phase1_scene(scene: Path) -> bool:
     return (scene / "train" / "images").is_dir() and (scene / "train" / "sparse" / "0").is_dir()
@@ -40,6 +42,16 @@ def discover_vai_phase1_scenes(root: Path) -> list[Path]:
     return scenes
 
 
+def find_test_poses_csv(scene: Path) -> Path:
+    test_dir = scene / "test"
+    for filename in TEST_POSE_FILENAMES:
+        candidate = test_dir / filename
+        if candidate.exists():
+            return candidate
+    expected = ", ".join(f"test/{filename}" for filename in TEST_POSE_FILENAMES)
+    raise DataValidationError(f"VAI scene is missing target pose CSV. Expected one of: {expected} under {scene}")
+
+
 def train_image_names(scene: Path) -> set[str]:
     image_dir = scene / "train" / "images"
     if not image_dir.is_dir():
@@ -52,7 +64,7 @@ def train_image_names(scene: Path) -> set[str]:
 
 def test_poses_csv_to_transforms(path: Path) -> dict[str, Any]:
     if not path.exists():
-        raise DataValidationError(f"test_poses.csv does not exist: {path}")
+        raise DataValidationError(f"target pose CSV does not exist: {path}")
     frames: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)

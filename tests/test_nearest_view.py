@@ -5,7 +5,7 @@ from PIL import Image
 from bts_nvs.nearest_view import render_nearest_dataset
 
 
-def _write_nearest_scene(scene: Path) -> None:
+def _write_nearest_scene(scene: Path, test_pose_name: str = "test_poses.csv") -> None:
     sparse = scene / "train" / "sparse" / "0"
     images = scene / "train" / "images"
     test = scene / "test"
@@ -28,7 +28,7 @@ def _write_nearest_scene(scene: Path) -> None:
         encoding="utf-8",
     )
     (sparse / "points3D.txt").write_text("", encoding="utf-8")
-    (test / "test_poses.csv").write_text(
+    (test / test_pose_name).write_text(
         "image_name,qw,qx,qy,qz,tx,ty,tz,fx,fy,cx,cy,width,height\n"
         "target.JPG,1,0,0,0,9,0,0,3,3,2,2,2,2\n",
         encoding="utf-8",
@@ -109,6 +109,16 @@ def test_render_nearest_dataset_writes_exact_target_name_by_default(tmp_path: Pa
         assert image.format == "JPEG"
         assert image.mode == "RGB"
         assert image.size == (2, 2)
+
+
+def test_render_nearest_dataset_accepts_singular_test_pose_csv_name(tmp_path: Path):
+    root = tmp_path / "private_set1"
+    _write_nearest_scene(root / "scene_a", test_pose_name="test_pose.csv")
+
+    result = render_nearest_dataset(root=root, output=tmp_path / "submission")
+
+    assert result.image_count == 1
+    assert (tmp_path / "submission" / "scene_a" / "target.JPG").exists()
 
 
 def test_render_nearest_dataset_can_force_png_stem_names(tmp_path: Path):

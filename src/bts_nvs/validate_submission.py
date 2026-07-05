@@ -10,7 +10,7 @@ from pathlib import Path
 from PIL import Image, UnidentifiedImageError
 
 from bts_nvs.exceptions import DataValidationError
-from bts_nvs.vai import TEST_POSE_COLUMNS, discover_vai_phase1_scenes
+from bts_nvs.vai import TEST_POSE_COLUMNS, discover_vai_phase1_scenes, find_test_poses_csv
 
 SUBMISSION_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg"}
 
@@ -52,13 +52,13 @@ def validate_submission(data_root: Path | str, submission: Path | str) -> Submis
 def _expected_outputs(data_root: Path) -> dict[str, dict[str, ExpectedImage]]:
     scenes: dict[str, dict[str, ExpectedImage]] = {}
     for scene in discover_vai_phase1_scenes(data_root):
-        scenes[scene.name] = _read_expected_images(scene / "test" / "test_poses.csv")
+        scenes[scene.name] = _read_expected_images(find_test_poses_csv(scene))
     return scenes
 
 
 def _read_expected_images(csv_path: Path) -> dict[str, ExpectedImage]:
     if not csv_path.exists():
-        raise DataValidationError(f"test_poses.csv does not exist: {csv_path}")
+        raise DataValidationError(f"target pose CSV does not exist: {csv_path}")
     expected: dict[str, ExpectedImage] = {}
     with csv_path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)

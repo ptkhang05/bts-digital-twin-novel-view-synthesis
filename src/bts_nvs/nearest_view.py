@@ -12,7 +12,7 @@ from PIL import Image
 from bts_nvs.camera import qvec_to_rotmat
 from bts_nvs.colmap import read_colmap_model
 from bts_nvs.exceptions import DataValidationError
-from bts_nvs.vai import TEST_POSE_COLUMNS, discover_vai_phase1_scenes, train_image_names
+from bts_nvs.vai import TEST_POSE_COLUMNS, discover_vai_phase1_scenes, find_test_poses_csv, train_image_names
 
 JPEG_SUFFIXES = {".jpg", ".jpeg"}
 IMAGE_FORMATS = {"auto", "jpeg", "png"}
@@ -96,7 +96,7 @@ def render_nearest_scene(
             stale_image.unlink()
 
     train_views = _read_train_views(scene_path)
-    targets = _read_target_poses(scene_path / "test" / "test_poses.csv")
+    targets = _read_target_poses(find_test_poses_csv(scene_path))
     seen_outputs: set[str] = set()
     for target in targets:
         output_name = _target_output_name(target.image_name, name_policy=name_policy)
@@ -141,7 +141,7 @@ def _read_train_views(scene: Path) -> list[TrainView]:
 
 def _read_target_poses(path: Path) -> list[TargetPose]:
     if not path.exists():
-        raise DataValidationError(f"test_poses.csv does not exist: {path}")
+        raise DataValidationError(f"target pose CSV does not exist: {path}")
     targets: list[TargetPose] = []
     with path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)

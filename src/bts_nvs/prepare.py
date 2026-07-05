@@ -15,7 +15,7 @@ from bts_nvs.schema import (
     validate_transforms,
     write_json,
 )
-from bts_nvs.vai import is_vai_phase1_scene, test_poses_csv_to_transforms, train_image_names
+from bts_nvs.vai import find_test_poses_csv, is_vai_phase1_scene, test_poses_csv_to_transforms, train_image_names
 
 
 @dataclass(frozen=True)
@@ -158,8 +158,8 @@ def _copy_target_cameras(
     target_path = scene / "target_cameras.json"
     if target_path.exists():
         targets = validate_transforms(load_json(target_path))
-    elif (scene / "test" / "test_poses.csv").exists():
-        targets = validate_transforms(test_poses_csv_to_transforms(scene / "test" / "test_poses.csv"))
+    elif is_vai_phase1_scene(scene):
+        targets = validate_transforms(test_poses_csv_to_transforms(find_test_poses_csv(scene)))
     else:
         return None, None
     target_count = len(targets["frames"])

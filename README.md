@@ -14,13 +14,19 @@ contains a scene with 103 train images and 26 target views. To avoid rejecting
 official BTC-provided data, this project validates phase1 with the observed
 safe envelope: 100-300 train images and 20-70 target views. The released phase1
 data uses COLMAP sparse reconstructions under `train/sparse/0` and target poses
-under `test/test_poses.csv`. Public phase metadata lists `FILE_ZIP` submissions
+under `test/test_poses.csv`. Some BTC round text also refers to
+`test/test_pose.csv`; the loader accepts both names and prefers
+`test_poses.csv` when both exist. Public phase metadata lists `FILE_ZIP` submissions
 on `GPU` workers. The BTC PDF briefs show PNG examples, but the round 1 brief
 also says filenames must follow `image_name` in `test/test_poses.csv`. The
 phase1 CSV currently uses `.JPG` names, so submission packaging preserves exact
 target filenames.
 
 Source: https://competition.viettel.vn/contests/var-2026
+
+Local text snapshots from the BTC pages are kept in `docs/btc-main.md` and
+`docs/btc-round1.md` so VM clones have the same readable reference without
+committing the original PDF files.
 
 ## Install
 
@@ -39,7 +45,7 @@ Supported raw scene inputs:
 - Viettel/VAI phase1 scene layout:
   - `train/images/`
   - `train/sparse/0/{cameras,images,points3D}.bin`
-  - `test/test_poses.csv`
+  - `test/test_poses.csv` or `test/test_pose.csv`
 - Nerfstudio/NeRF-style `train_cameras.json` or `transforms.json` plus `images/`.
 - COLMAP sparse reconstruction in `sparse/0`, `sparse`, or `colmap/sparse/0`
   plus `images/`.
@@ -48,7 +54,7 @@ Target views use the same JSON camera schema as `transforms.json`.
 
 When a raw scene contains `target_cameras.json`, `prepare` validates and copies
 it to the processed scene. For VAI phase1 scenes, `prepare` converts
-`test/test_poses.csv` into `target_cameras.json`. Use `--strict-contest` with
+`test/test_poses.csv` or `test/test_pose.csv` into `target_cameras.json`. Use `--strict-contest` with
 `--contest-phase` to enforce a known BTC rule set:
 
 - `phase1`: 100-300 training images, 20-70 target cameras. This matches the
