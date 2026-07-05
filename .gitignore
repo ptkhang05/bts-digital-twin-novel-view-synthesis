@@ -15,5 +15,6 @@ processed/
 submission/
 submission*.zip
 renders/
+*.pdf
 .env
 .env.*
