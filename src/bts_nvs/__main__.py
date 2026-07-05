@@ -8,7 +8,7 @@ def main() -> None:
         prog="python -m bts_nvs",
         description=(
             "BTS NVS baseline. Use a submodule: prepare, prepare_dataset, train, "
-            "render, nearest_view, evaluate, or package."
+            "render, nearest_view, evaluate, package, or validate_submission."
         ),
     )
     parser.print_help()

@@ -65,6 +65,7 @@ python -m bts_nvs.train --scene processed_scene --preset fast --disable-pose-nor
 python -m bts_nvs.render --checkpoint outputs/.../config.yml --targets processed_scene/target_cameras.json --out submission/scene_id --strict-contest
 python -m bts_nvs.evaluate --pred submission/scene_id --gt VAI_NVS_DATA/phase1/public_set/scene_id/test/images --match-by-stem --psnr-max 40
 python -m bts_nvs.package --submission submission --out submission.zip
+python -m bts_nvs.validate_submission --data-root VAI_NVS_DATA/phase1/private_set1 --submission submission.zip
 ```
 
 If no trained Nerfstudio checkpoint is available yet, create a low-cost
@@ -73,6 +74,7 @@ submission smoke test with temporal blending between adjacent drone frames:
 ```powershell
 python -m bts_nvs.nearest_view --root VAI_NVS_DATA/phase1/private_set1 --out submission/temporal_blend_private_set1 --selection-mode temporal-blend --blend-weight-policy linear --jpeg-quality 95
 python -m bts_nvs.package --submission submission/temporal_blend_private_set1 --out submission_round1.zip
+python -m bts_nvs.validate_submission --data-root VAI_NVS_DATA/phase1/private_set1 --submission submission_round1.zip
 ```
 
 For phase1, this writes exact `image_name` filenames such as
@@ -111,6 +113,16 @@ For VAI phase1, rendered filenames follow the `image_name` column in
 `test/test_poses.csv` exactly. The general problem statement also shows
 numbered PNG filenames such as `0001.png`; treat that as illustrative unless a
 round-specific adapter says otherwise.
+
+Before uploading, validate the folder or ZIP against the BTC CSVs:
+
+```powershell
+python -m bts_nvs.validate_submission --data-root VAI_NVS_DATA/phase1/private_set1 --submission submission_round1.zip
+```
+
+The validator checks scene folders, exact target filenames, missing or extra
+images, image dimensions from `test_poses.csv`, readable image files, RGB mode,
+and rejects ZIP members that are not directly under `scene_id/image_name`.
 
 ## VAI Phase1 Notes
 
