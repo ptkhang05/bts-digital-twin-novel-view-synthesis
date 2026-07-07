@@ -70,6 +70,7 @@ python -m bts_nvs.train --scene processed_scene --preset fast
 python -m bts_nvs.train --scene processed_scene --preset fast --disable-pose-normalization -- --viewer.quit-on-train-completion True
 python -m bts_nvs.render --checkpoint outputs/.../config.yml --targets processed_scene/target_cameras.json --out submission/scene_id --strict-contest
 python -m bts_nvs.evaluate --pred submission/scene_id --gt VAI_NVS_DATA/phase1/public_set/scene_id/test/images --match-by-stem --psnr-max 40
+python -m bts_nvs.score_submission --data-root VAI_NVS_DATA/phase1/public_set --submission submission/public_variant --match-by-stem --psnr-max 40 --out metrics/public_variant.json
 python -m bts_nvs.package --submission submission --out submission.zip
 python -m bts_nvs.validate_submission --data-root VAI_NVS_DATA/phase1/private_set1 --submission submission.zip
 ```
@@ -160,3 +161,6 @@ and rejects ZIP members that are not directly under `scene_id/image_name`.
 - When SSIM and LPIPS dependencies are installed, `evaluate` also reports BTC's
   aggregate score: `0.4 * (1 - LPIPS) + 0.3 * SSIM + 0.3 * psnr_norm`, where
   `psnr_norm = clamp(PSNR / --psnr-max, 0, 1)`.
+- Use `score_submission` on `public_set` variants before spending GPU time on a
+  full private render. It reports both aggregate metrics and per-scene metrics,
+  which makes regressions easier to localize than BTC's private aggregate score.
