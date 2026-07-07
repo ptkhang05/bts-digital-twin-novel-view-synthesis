@@ -12,7 +12,7 @@ from bts_nvs.exceptions import DataValidationError
 
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg"}
-DEFAULT_PSNR_MAX = 40.0
+DEFAULT_PSNR_MAX = 50.0
 MIN_LPIPS_IMAGE_SIDE = 32
 
 

@@ -4,7 +4,7 @@ import math
 
 from PIL import Image
 
-from bts_nvs.evaluate import compute_competition_score, evaluate_directories, normalize_psnr
+from bts_nvs.evaluate import DEFAULT_PSNR_MAX, compute_competition_score, evaluate_directories, normalize_psnr
 
 
 def test_evaluate_identical_images_reports_zero_mae_and_infinite_psnr(tmp_path: Path):
@@ -74,3 +74,15 @@ def test_compute_competition_score_uses_btc_weighting():
     score = compute_competition_score(psnr=20.0, ssim=0.8, lpips=0.25, psnr_max=40.0)
 
     assert math.isclose(score, 0.4 * (1.0 - 0.25) + 0.3 * 0.8 + 0.3 * 0.5)
+
+
+def test_default_psnr_max_matches_btc_leaderboard_scale():
+    score = compute_competition_score(
+        psnr=19.360869,
+        ssim=0.556719,
+        lpips=0.250431,
+        psnr_max=DEFAULT_PSNR_MAX,
+    )
+
+    assert DEFAULT_PSNR_MAX == 50.0
+    assert math.isclose(score, 0.583009, abs_tol=1e-6)
