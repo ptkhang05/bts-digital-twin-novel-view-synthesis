@@ -1,16 +1,7 @@
-[Trang chủ](https://competition.viettel.vn/) | [Đề bài](https://competition.viettel.vn/contests) | [Bảng xếp hạng](https://competition.viettel.vn/leaderboards) | [Diễn đàn](https://competition.viettel.vn/forum) | [Thể lệ](https://competition.viettel.vn/rules)
-
-[Quay lại đề bài](https://competition.viettel.vn/contests/var-2026)
-
-Vòng 1 Đang mở
-
 # Vòng 1 - Sơ loại
 
-02/07/2026 - 30/07/2026
-
-[Lịch sử nộp bài](https://competition.viettel.vn/contests/var-2026/phases/019e649f-4e43-75ab-9a7b-bd1459cd7c06/submissions) | [Nộp bài](https://competition.viettel.vn/contests/var-2026/phases/019e649f-4e43-75ab-9a7b-bd1459cd7c06/submit)
-
-## Đề bài & Quy định
+<!-- Extracted from D:\BTS 2.html -->
+<!-- saved from url=(0092)https://competition.viettel.vn/contests/var-2026/phases/019e649f-4e43-75ab-9a7b-bd1459cd7c06 -->
 
 ## 1. Mô tả vòng thi
 
@@ -78,6 +69,8 @@ Yêu cầu:
 
 **Chúc thí sinh thi tốt!**
 
+---
+
 ## Chi tiết vòng thi
 
 | Hạng mục | Thông tin |
@@ -89,27 +82,4 @@ Yêu cầu:
 
 ## Dữ liệu công khai
 
-[Tải dữ liệu](https://drive.google.com/file/d/15muyDAfU1SqxpVgLWD4tkMa2wKJGjqiv/view?usp=sharing)
-
-## Tập đoàn Công nghiệp - Viễn thông Quân đội
-
-Lô D26, Khu đô thị mới Cầu Giấy, Phường Cầu Giấy, Hà Nội, Việt Nam
-
-### Theo dõi Viettel
-
-- [Facebook](https://www.facebook.com/ViettelCareers)
-- [YouTube](https://www.youtube.com/@viettelcareers2728)
-- [LinkedIn](https://www.linkedin.com/company/viettel-group/)
-- [Community Group](https://www.facebook.com/groups/viettelairace)
-
-### Về cuộc thi
-
-- [Thể lệ](https://competition.viettel.vn/rules)
-- [Đề bài](https://competition.viettel.vn/contests)
-- [Bảng xếp hạng](https://competition.viettel.vn/leaderboards)
-
-### Hỗ trợ
-
-- [Diễn đàn](https://competition.viettel.vn/forum)
-
-© 2026 Tập đoàn Công nghiệp - Viễn thông Quân đội. Bảo lưu mọi quyền.
+- Link tải dữ liệu: <https://drive.google.com/file/d/15muyDAfU1SqxpVgLWD4tkMa2wKJGjqiv/view?usp=sharing>

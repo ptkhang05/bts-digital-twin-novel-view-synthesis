@@ -1,49 +1,17 @@
-Trang chủ > Đề bài > Bài 1 - BTS Digital Twin (Novel View Synthesis)
-
-Đang diễn ra
-
-3 Phase
-
-02/07/2026 - 10/09/2026
-
 # Bài 1 - BTS Digital Twin (Novel View Synthesis)
 
-Phase 1 kết thúc trong
-25d : 01h : 02m : 14s
+<!-- Extracted from D:\BTS 1.html -->
+<!-- saved from url=(0048)https://competition.viettel.vn/contests/var-2026 -->
 
-Đã đăng ký
+## Lộ trình
 
-Tổng quan
-Lịch trình
+Thời gian cuộc thi: 02/07/2026 - 10/09/2026
 
-Lộ trình
-
-## 3 Phase
-
-1
-Phase 1
-LIVE
-Vòng 1 - Sơ loại
-02/07/2026 → 30/07/2026
-Tệp ZIP
-GPU
-https://competition.viettel.vn/contests/var-2026/phases/019e649f-4e43-75ab-9a7b-bd1459cd7c06
-
-2
-Phase 2
-Vòng 2 - Sơ khảo
-17/08/2026 → 19/08/2026
-Tệp ZIP
-GPU
-https://competition.viettel.vn/contests/var-2026/phases/019e649f-4e4a-72d8-a1d1-f39098bdbe76
-
-3
-Phase 3
-Vòng 3 - Chung kết
-09/09/2026 → 10/09/2026
-Tệp ZIP
-GPU
-https://competition.viettel.vn/contests/var-2026/phases/019e649f-4e51-76dd-83bb-65713ffec128
+| Phase | Tên vòng | Thời gian | Loại bài nộp | Hạ tầng chấm |
+| --- | --- | --- | --- | --- |
+| Phase 1 | Vòng 1 - Sơ loại | 02/07/2026 → 30/07/2026 | Tệp ZIP | GPU |
+| Phase 2 | Vòng 2 - Sơ khảo | 17/08/2026 → 19/08/2026 | Tệp ZIP | GPU |
+| Phase 3 | Vòng 3 - Chung kết | 09/09/2026 → 10/09/2026 | Tệp ZIP | GPU |
 
 Bài toán yêu cầu thí sinh xây dựng hệ thống AI có khả năng tái dựng cấu trúc 3D ngầm định của trạm BTS từ tập ảnh drone, và sinh ảnh RGB tại các góc nhìn chưa từng được chụp. Đây là hướng tiếp cận hiện đại cho việc xây dựng Digital Twin - bản sao số 3D có độ chính xác cao của hạ tầng viễn thông - phục vụ giám sát, kiểm tra, bảo trì và quy hoạch lắp đặt thiết bị. Mỗi scene gồm 100-300 ảnh RGB kèm thông số camera và pose tương ứng; thí sinh cần sinh ảnh tại 20-50 góc nhìn mục tiêu, đảm bảo đúng về hình học, vị trí thiết bị và chất lượng hình ảnh chân thực.
 
@@ -243,7 +211,6 @@ Score =
 +
 0.3 \times PSNR_{norm}
 $$
-
 Điểm trên bảng xếp hạng là điểm trung bình của toàn bộ các scene, nếu thiếu scene hoặc thừa scene so với groundtruth, kết quả sẽ không được tính.
 
 # 9. Hình thức thi
@@ -300,32 +267,3 @@ Ban Tổ Chức có quyền yêu cầu chứng minh quy trình sinh ảnh hoàn 
 # 11. Baseline thí sinh có thể tham khảo
 
 <https://github.com/graphdeco-inria/gaussian-splatting>
-
-Thông tin
-Trạng thái
-Đang diễn ra
-Bắt đầu
-02/07/2026
-Kết thúc
-10/09/2026
-Số vòng thi
-3
-Xem bảng xếp hạng
-
-Tập đoàn Công nghiệp - Viễn thông Quân đội
-
-Lô D26, Khu đô thị mới Cầu Giấy, Phường Cầu Giấy, Hà Nội, Việt Nam
-
-Theo dõi Viettel
-
-Về cuộc thi
-
-- [Thể lệ](https://competition.viettel.vn/rules)
-- [Đề bài](https://competition.viettel.vn/contests)
-- [Bảng xếp hạng](https://competition.viettel.vn/leaderboards)
-
-Hỗ trợ
-
-- [Diễn đàn](https://competition.viettel.vn/forum)
-
-© 2026 Tập đoàn Công nghiệp - Viễn thông Quân đội. Bảo lưu mọi quyền.
