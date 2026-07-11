@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import shlex
 import subprocess
+import warnings
 from pathlib import Path
 
 from bts_nvs.exceptions import ExternalCommandError
@@ -11,7 +12,14 @@ from bts_nvs.exceptions import ExternalCommandError
 PRESETS = {
     "fast": "splatfacto",
     "quality": "splatfacto-big",
+    "quality-aa": "splatfacto-big",
 }
+
+PRESET_ARGS = {
+    "quality-aa": ["--pipeline.model.rasterize-mode", "antialiased"],
+}
+
+RECOMMENDED_MAX_ITERATIONS = 30_000
 
 
 def build_train_command(
@@ -25,6 +33,7 @@ def build_train_command(
     if preset not in PRESETS:
         raise ValueError(f"Unknown preset '{preset}'. Expected one of: {', '.join(PRESETS)}")
     command = ["ns-train", PRESETS[preset]]
+    command.extend(PRESET_ARGS.get(preset, []))
     if output_dir is not None:
         command.extend(["--output-dir", str(output_dir)])
     if experiment_name is not None:
@@ -48,6 +57,35 @@ def build_train_command(
     else:
         command.extend(["--data", str(scene)])
     return command
+
+
+def warn_extended_training(preset: str, extra_args: list[str] | None) -> None:
+    """Warn when a Splatfacto run exceeds Nerfstudio's tuned schedule."""
+    if preset not in PRESETS or not extra_args:
+        return
+
+    iterations: int | None = None
+    for index, argument in enumerate(extra_args):
+        if argument == "--max-num-iterations" and index + 1 < len(extra_args):
+            try:
+                iterations = int(extra_args[index + 1])
+            except ValueError:
+                return
+            break
+        if argument.startswith("--max-num-iterations="):
+            try:
+                iterations = int(argument.split("=", 1)[1])
+            except ValueError:
+                return
+            break
+
+    if iterations is not None and iterations > RECOMMENDED_MAX_ITERATIONS:
+        warnings.warn(
+            f"Nerfstudio Splatfacto schedules are tuned for {RECOMMENDED_MAX_ITERATIONS} iterations; "
+            f"requested {iterations}. Validate extended training on the complete public set before private runs.",
+            UserWarning,
+            stacklevel=2,
+        )
 
 
 def default_train_log_path(scene: Path | str) -> Path:
@@ -128,6 +166,7 @@ def main() -> None:
     extra_args = args.extra_args
     if extra_args and extra_args[0] == "--":
         extra_args = extra_args[1:]
+    warn_extended_training(args.preset, extra_args)
     command = build_train_command(
         scene=args.scene,
         preset=args.preset,
