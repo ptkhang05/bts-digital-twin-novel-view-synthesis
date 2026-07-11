@@ -1,6 +1,6 @@
 # Bài 1 - BTS Digital Twin (Novel View Synthesis)
 
-<!-- Extracted from D:\BTS 1.html -->
+<!-- Verified against the BTC contest page on 2026-07-11. -->
 <!-- saved from url=(0048)https://competition.viettel.vn/contests/var-2026 -->
 
 ## Lộ trình

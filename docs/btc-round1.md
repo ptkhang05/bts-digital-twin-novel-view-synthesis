@@ -1,6 +1,6 @@
 # Vòng 1 - Sơ loại
 
-<!-- Extracted from D:\BTS 2.html -->
+<!-- Verified against the BTC phase page on 2026-07-11. -->
 <!-- saved from url=(0092)https://competition.viettel.vn/contests/var-2026/phases/019e649f-4e43-75ab-9a7b-bd1459cd7c06 -->
 
 ## 1. Mô tả vòng thi

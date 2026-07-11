@@ -68,6 +68,7 @@ python -m bts_nvs.prepare_dataset --root VAI_NVS_DATA/phase1/public_set --out pr
 python -m bts_nvs.prepare --scene raw_scene --out processed_scene --strict-contest
 python -m bts_nvs.train --scene processed_scene --preset fast
 python -m bts_nvs.train --scene processed_scene --preset fast --disable-pose-normalization -- --viewer.quit-on-train-completion True
+python -m bts_nvs.train --scene processed_scene --preset quality-aa --disable-pose-normalization -- --max-num-iterations 30000 --viewer.quit-on-train-completion True
 python -m bts_nvs.render --checkpoint outputs/.../config.yml --targets processed_scene/target_cameras.json --out submission/scene_id --strict-contest
 python -m bts_nvs.evaluate --pred submission/scene_id --gt VAI_NVS_DATA/phase1/public_set/scene_id/test/images --match-by-stem --psnr-max 50
 python -m bts_nvs.score_submission --data-root VAI_NVS_DATA/phase1/public_set --submission submission/public_variant --match-by-stem --psnr-max 50 --out metrics/public_variant.json
@@ -165,3 +166,14 @@ and rejects ZIP members that are not directly under `scene_id/image_name`.
 - Use `score_submission` on `public_set` variants before spending GPU time on a
   full private render. It reports both aggregate metrics and per-scene metrics,
   which makes regressions easier to localize than BTC's private aggregate score.
+- Treat 30,000 iterations as the current phase1 baseline for `splatfacto-big`.
+  The private 60,000-iteration run scored `57.85830`, below the otherwise
+  equivalent 30,000-iteration run at `58.30090`; all three reported metrics
+  regressed. Nerfstudio's Splatfacto optimizer schedules are also configured
+  around 30,000 steps. The CLI now warns when an explicit iteration budget
+  exceeds that value.
+- `--preset quality-aa` is an experimental `splatfacto-big` variant using
+  gsplat's antialiased rasterizer. Nerfstudio documents this mode as compensating
+  tiny splats when render resolution differs from capture resolution. Score it
+  across all five public scenes before using it for private scenes; it is not a
+  confirmed leaderboard improvement yet.
