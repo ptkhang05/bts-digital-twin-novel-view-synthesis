@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 
 import numpy as np
 
@@ -38,8 +39,11 @@ def rectify_intrinsics(
     k4: float = 0.0,
     p1: float = 0.0,
     p2: float = 0.0,
+    preserve_all_pixels: bool = False,
 ) -> RectifiedCalibration:
-    """Match Nerfstudio's perspective-image rectification and ROI crop."""
+    """Build a pinhole camera for either training-compatible crop or full target FOV."""
+    # Mirrors Nerfstudio's official full-image dataloader implementation:
+    # https://github.com/nerfstudio-project/nerfstudio/blob/main/nerfstudio/data/utils/dataloaders.py
     if width <= 0 or height <= 0:
         raise DataValidationError("Camera width and height must be positive")
     if fx <= 0 or fy <= 0:
@@ -52,7 +56,10 @@ def rectify_intrinsics(
     distortion = (float(k1), float(k2), float(k3), float(k4), float(p1), float(p2))
     cv_distortion = _opencv_distortion(distortion)
     if np.any(cv_distortion):
-        render_k, roi = cv2.getOptimalNewCameraMatrix(raw_k, cv_distortion, (width, height), 0)
+        alpha = 1 if preserve_all_pixels else 0
+        render_k, roi = cv2.getOptimalNewCameraMatrix(raw_k, cv_distortion, (width, height), alpha)
+        if preserve_all_pixels:
+            roi = (0, 0, width, height)
     else:
         render_k = raw_k.copy()
         roi = (0, 0, width, height)
@@ -92,6 +99,19 @@ def redistort_image(image: np.ndarray, calibration: RectifiedCalibration) -> np.
         return image.copy()
 
     cv2 = _load_cv2()
+    map_x, map_y = _redistort_maps(calibration)
+    return cv2.remap(
+        image,
+        map_x,
+        map_y,
+        interpolation=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+    )
+
+
+@lru_cache(maxsize=16)
+def _redistort_maps(calibration: RectifiedCalibration) -> tuple[np.ndarray, np.ndarray]:
+    cv2 = _load_cv2()
     raw_k = _opencv_camera_matrix(
         fx=calibration.raw_fx,
         fy=calibration.raw_fy,
@@ -112,13 +132,7 @@ def redistort_image(image: np.ndarray, calibration: RectifiedCalibration) -> np.
         _opencv_distortion(calibration.distortion),
         P=render_k,
     ).reshape(calibration.raw_height, calibration.raw_width, 2)
-    return cv2.remap(
-        image,
-        rectified_pixels[..., 0],
-        rectified_pixels[..., 1],
-        interpolation=cv2.INTER_LINEAR,
-        borderMode=cv2.BORDER_CONSTANT,
-    )
+    return rectified_pixels[..., 0], rectified_pixels[..., 1]
 
 
 def _opencv_camera_matrix(*, fx: float, fy: float, cx: float, cy: float) -> np.ndarray:

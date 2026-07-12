@@ -5,7 +5,14 @@ import pytest
 from PIL import Image
 
 from bts_nvs.exceptions import DataValidationError
-from bts_nvs.render import build_camera_path, build_render_command, rendered_image_directory, _rename_rendered_images
+from bts_nvs.render import (
+    _rename_rendered_images,
+    build_camera_path,
+    build_exact_render_command,
+    build_render_command,
+    render_targets,
+    rendered_image_directory,
+)
 
 
 def test_build_camera_path_converts_target_transforms_to_nerfstudio_camera_path(tmp_path: Path):
@@ -110,6 +117,54 @@ def test_build_render_command_requests_lossless_image_sequence(tmp_path: Path):
     assert command[command.index("--output-format") + 1] == "images"
     assert "--image-format" in command
     assert command[command.index("--image-format") + 1] == "png"
+
+
+def test_build_exact_render_command_uses_current_nerfstudio_python(tmp_path: Path):
+    command = build_exact_render_command(
+        checkpoint=tmp_path / "config.yml",
+        targets=tmp_path / "target_cameras.json",
+        output=tmp_path / "submission",
+    )
+
+    assert command[1:3] == ["-m", "bts_nvs.render_exact"]
+    assert command[command.index("--checkpoint") + 1] == str(tmp_path / "config.yml")
+    assert command[command.index("--targets") + 1] == str(tmp_path / "target_cameras.json")
+
+
+def test_render_targets_distortion_mode_routes_to_exact_renderer(tmp_path: Path):
+    targets = {
+        "camera_model": "OPENCV",
+        "fl_x": 10.0,
+        "fl_y": 10.0,
+        "cx": 8.0,
+        "cy": 6.0,
+        "w": 16,
+        "h": 12,
+        "k1": -0.1,
+        "frames": [
+            {
+                "file_path": "target.JPG",
+                "transform_matrix": [
+                    [1, 0, 0, 0],
+                    [0, 1, 0, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1],
+                ],
+            }
+        ],
+    }
+    target_file = tmp_path / "target_cameras.json"
+    target_file.write_text(json.dumps(targets), encoding="utf-8")
+
+    command = render_targets(
+        checkpoint=tmp_path / "config.yml",
+        targets=target_file,
+        output=tmp_path / "submission",
+        dry_run=True,
+        apply_lens_distortion=True,
+    )
+
+    assert command[1:3] == ["-m", "bts_nvs.render_exact"]
 
 
 def test_rendered_image_directory_matches_nerfstudio_image_output_rule(tmp_path: Path):

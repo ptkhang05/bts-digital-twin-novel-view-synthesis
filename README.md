@@ -70,6 +70,7 @@ python -m bts_nvs.train --scene processed_scene --preset fast
 python -m bts_nvs.train --scene processed_scene --preset fast --disable-pose-normalization -- --viewer.quit-on-train-completion True
 python -m bts_nvs.train --scene processed_scene --preset quality-aa --disable-pose-normalization -- --max-num-iterations 30000 --viewer.quit-on-train-completion True
 python -m bts_nvs.render --checkpoint outputs/.../config.yml --targets processed_scene/target_cameras.json --out submission/scene_id --strict-contest
+python -m bts_nvs.render --checkpoint outputs/.../config.yml --targets processed_scene/target_cameras.json --out submission/scene_id --strict-contest --apply-lens-distortion
 python -m bts_nvs.evaluate --pred submission/scene_id --gt VAI_NVS_DATA/phase1/public_set/scene_id/test/images --match-by-stem --psnr-max 50
 python -m bts_nvs.score_submission --data-root VAI_NVS_DATA/phase1/public_set --submission submission/public_variant --match-by-stem --psnr-max 50 --out metrics/public_variant.json
 python -m bts_nvs.package --submission submission --out submission.zip
@@ -147,6 +148,13 @@ and rejects ZIP members that are not directly under `scene_id/image_name`.
   rendering BTC target poses that are already in the same COLMAP coordinate
   frame, train with `--disable-pose-normalization` so target camera paths stay
   in the same frame as the trained model.
+- Splatfacto undistorts full training images and updates their intrinsics before
+  training. Use `--apply-lens-distortion` to render target views with exact
+  full-FOV pinhole intrinsics and map the result back through the scene's COLMAP
+  lens model. This is especially important for the phase1 HNI scenes, whose
+  radial distortion is much stronger than the HCM scenes. Run this option in
+  the same Python environment as Nerfstudio; it uses Nerfstudio's public model
+  rendering API and OpenCV.
 - Rendered predictions from Nerfstudio are PNGs by default, while phase1 target
   filenames are often `.JPG`. Preserve exact target names for submission, or the
   evaluator may mark images missing even when scene directories match.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import sys
 from pathlib import Path
 
 from PIL import Image
@@ -78,6 +79,24 @@ def build_render_command(checkpoint: Path | str, camera_path_file: Path | str, o
     ]
 
 
+def build_exact_render_command(
+    checkpoint: Path | str,
+    targets: Path | str,
+    output: Path | str,
+) -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "bts_nvs.render_exact",
+        "--checkpoint",
+        str(checkpoint),
+        "--targets",
+        str(targets),
+        "--out",
+        str(output),
+    ]
+
+
 def render_targets(
     checkpoint: Path | str,
     targets: Path | str,
@@ -85,11 +104,21 @@ def render_targets(
     dry_run: bool = False,
     strict_contest: bool = False,
     contest_phase: str = DEFAULT_CONTEST_PHASE,
+    apply_lens_distortion: bool = False,
 ) -> list[str]:
     output_dir = Path(output)
     output_dir.mkdir(parents=True, exist_ok=True)
     _remove_stale_submission_images(output_dir)
-    camera_path, target_names = build_camera_path(targets, strict_contest=strict_contest, contest_phase=contest_phase)
+    camera_path, target_names = build_camera_path(
+        targets,
+        strict_contest=strict_contest,
+        contest_phase=contest_phase,
+    )
+    if apply_lens_distortion:
+        command = build_exact_render_command(checkpoint, targets, output_dir)
+        if not dry_run:
+            run_external_command(command)
+        return command
     camera_path_file = output_dir / "camera_path.json"
     nerfstudio_output = output_dir / "targets"
     write_json(camera_path_file, camera_path)
@@ -138,6 +167,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true", help="Write camera path and print command without running.")
     parser.add_argument("--strict-contest", action="store_true", help="Enforce target-view limits from the selected rule set.")
     parser.add_argument(
+        "--apply-lens-distortion",
+        action="store_true",
+        help="Render with exact rectified intrinsics, then map pixels back through the source lens model.",
+    )
+    parser.add_argument(
         "--contest-phase",
         default=DEFAULT_CONTEST_PHASE,
         help="Contest rule set for --strict-contest. Known values: phase1, overview.",
@@ -154,6 +188,7 @@ def main() -> None:
         dry_run=args.dry_run,
         strict_contest=args.strict_contest,
         contest_phase=args.contest_phase,
+        apply_lens_distortion=args.apply_lens_distortion,
     )
     print(" ".join(command))
 
