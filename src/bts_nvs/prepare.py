@@ -9,6 +9,7 @@ from bts_nvs.colmap import colmap_model_to_nerfstudio, find_colmap_sparse_dir, r
 from bts_nvs.contest import DEFAULT_CONTEST_PHASE, validate_target_view_count, validate_training_image_count
 from bts_nvs.exceptions import DataValidationError
 from bts_nvs.schema import (
+    DISTORTION_KEYS,
     load_json,
     normalized_image_relpath,
     resolve_frame_image,
@@ -60,6 +61,7 @@ def prepare_scene(
     target_cameras_path, target_count = _copy_target_cameras(
         scene_path,
         output_path,
+        training_transforms=transforms,
         strict_contest=strict_contest,
         contest_phase=contest_phase,
     )
@@ -152,6 +154,7 @@ def _copy_images(scene: Path, output: Path, transforms: dict, copy_mode: str) ->
 def _copy_target_cameras(
     scene: Path,
     output: Path,
+    training_transforms: dict,
     strict_contest: bool,
     contest_phase: str,
 ) -> tuple[Path | None, int | None]:
@@ -160,6 +163,9 @@ def _copy_target_cameras(
         targets = validate_transforms(load_json(target_path))
     elif is_vai_phase1_scene(scene):
         targets = validate_transforms(test_poses_csv_to_transforms(find_test_poses_csv(scene)))
+        for key in DISTORTION_KEYS:
+            if key in training_transforms:
+                targets[key] = training_transforms[key]
     else:
         return None, None
     target_count = len(targets["frames"])

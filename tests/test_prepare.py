@@ -118,7 +118,7 @@ def test_prepare_scene_supports_vai_phase1_layout_and_filters_sparse_images(tmp_
 
     (sparse / "cameras.txt").write_text(
         "# Camera list\n"
-        "1 PINHOLE 16 12 10 11 8 6\n",
+        "1 SIMPLE_RADIAL 16 12 10 8 6 -0.1\n",
         encoding="utf-8",
     )
     (sparse / "images.txt").write_text(
@@ -146,6 +146,7 @@ def test_prepare_scene_supports_vai_phase1_layout_and_filters_sparse_images(tmp_
     assert result.target_count == 1
     assert targets["frames"][0]["file_path"] == "target.JPG"
     assert targets["frames"][0]["transform_matrix"][0][3] == -1.0
+    assert targets["k1"] == -0.1
 
 
 def test_prepare_scene_can_write_filename_holdout_split(tmp_path: Path):
