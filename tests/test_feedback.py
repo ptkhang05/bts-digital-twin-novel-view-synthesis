@@ -79,7 +79,104 @@ def test_first_feedback_promotes_entire_candidate_and_keeps_submitted_zip(tmp_pa
     assert paths["zip_path"].read_bytes() == submitted
     assert result["zip_size_bytes"] == len(submitted)
     assert result["zip_sha256"] == hashlib.sha256(submitted).hexdigest()
+    assert result["validator_status"] == "pass"
+    assert result["score_delta_vs_best"] is None
     assert load_records(paths["ledger_path"]) == [result]
+
+
+def test_cli_records_complete_current_metadata_and_automatic_validation(tmp_path: Path, capsys):
+    data_root = _write_dataset(tmp_path)
+    paths = _paths(tmp_path)
+    _write_rendered(paths["candidate_dir"], (200, 10, 10))
+    _write_submitted_zip(data_root, paths["candidate_dir"], paths["zip_path"])
+
+    assert feedback_module.main(
+        [
+            "--submission-id",
+            "round2-complete-metadata",
+            "--dataset-id",
+            "vai_round2",
+            "--score",
+            "50.0",
+            "--data-root",
+            str(data_root),
+            "--candidate",
+            str(paths["candidate_dir"]),
+            "--best",
+            str(paths["best_dir"]),
+            "--zip",
+            str(paths["zip_path"]),
+            "--ledger",
+            str(paths["ledger_path"]),
+            "--dataset-manifest-sha256",
+            "a" * 64,
+            "--git-commit",
+            "abc123",
+            "--container-image-digest",
+            "sha256:container",
+            "--command",
+            "python -m bts_nvs.train --preset quality",
+            "--config-json",
+            '{"rasterization":"classic"}',
+            "--metrics-json",
+            '{"chair":{"score":0.75}}',
+            "--seed",
+            "42",
+            "--iterations",
+            "30000",
+            "--distortion",
+            "auto",
+            "--jpeg-quality",
+            "95",
+            "--hardware-json",
+            '{"gpu":"RTX 4090","vram_gb":24}',
+            "--gpu-time-seconds",
+            "123.5",
+            "--hypothesis",
+            "classic baseline",
+            "--next-action",
+            "compare antialiased",
+        ]
+    ) == 0
+
+    result = json.loads(capsys.readouterr().out)
+    assert result["seed"] == 42
+    assert result["iterations"] == 30_000
+    assert result["distortion"] == "auto"
+    assert result["jpeg_quality"] == 95
+    assert result["hardware"] == {"gpu": "RTX 4090", "vram_gb": 24}
+    assert result["validator_status"] == "pass"
+    assert result["score_delta_vs_best"] is None
+    assert result["decision"] == "promote"
+    assert result["reproducibility_status"] == "complete"
+
+
+def test_feedback_accepts_identical_member_bytes_with_different_zip_metadata(tmp_path: Path):
+    data_root = _write_dataset(tmp_path)
+    paths = _paths(tmp_path)
+    _write_rendered(paths["candidate_dir"], (200, 10, 10))
+    deterministic_zip = _write_submitted_zip(data_root, paths["candidate_dir"], paths["zip_path"])
+    with zipfile.ZipFile(paths["zip_path"]) as archive:
+        member_payload = archive.read("scene_a/target.JPG")
+    rewritten = tmp_path / "rewritten.zip"
+    with zipfile.ZipFile(rewritten, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr("scene_a/target.JPG", member_payload, compress_type=zipfile.ZIP_STORED)
+    os.replace(rewritten, paths["zip_path"])
+    rewritten_payload = paths["zip_path"].read_bytes()
+    assert rewritten_payload != deterministic_zip
+
+    result = feedback_module.process_feedback(
+        submission_id="round2-metadata-only-difference",
+        dataset_id="vai_round2",
+        score=50.0,
+        data_root=data_root,
+        **paths,
+    )
+
+    assert result["decision"] == "promote"
+    assert result["zip_sha256"] == hashlib.sha256(rewritten_payload).hexdigest()
+    assert paths["zip_path"].read_bytes() == rewritten_payload
+    assert (paths["best_dir"] / "rendered" / "scene_a" / "target.JPG").read_bytes() == member_payload
 
 
 def test_lower_score_regenerates_zip_from_best_before_removing_candidate(tmp_path: Path):
@@ -99,6 +196,8 @@ def test_lower_score_regenerates_zip_from_best_before_removing_candidate(tmp_pat
     )
 
     assert result["decision"] == "reject"
+    assert result["validator_status"] == "pass"
+    assert result["score_delta_vs_best"] == -1.0
     assert not paths["candidate_dir"].exists()
     assert paths["best_dir"].exists()
     with zipfile.ZipFile(paths["zip_path"]) as archive:
@@ -108,6 +207,46 @@ def test_lower_score_regenerates_zip_from_best_before_removing_candidate(tmp_pat
         "incumbent",
         "round2-002",
     ]
+
+
+def test_feedback_places_all_transient_artifacts_in_fixed_staging_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    data_root = _write_dataset(tmp_path)
+    paths = _paths(tmp_path)
+    _write_rendered(paths["candidate_dir"], (200, 10, 10))
+    _write_rendered(paths["best_dir"], (10, 200, 10))
+    _write_submitted_zip(data_root, paths["candidate_dir"], paths["zip_path"])
+    append_record(_record("incumbent", score=60.0), paths["ledger_path"])
+    real_replace = os.replace
+    replacements: list[tuple[Path, Path]] = []
+
+    def record_replace(source, destination):
+        replacements.append((Path(source), Path(destination)))
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(feedback_module.os, "replace", record_replace)
+
+    feedback_module.process_feedback(
+        submission_id="staging-contract",
+        dataset_id="vai_round2",
+        score=59.0,
+        data_root=data_root,
+        **paths,
+    )
+
+    staging = paths["candidate_dir"].parent / ".staging"
+    transient_paths = [
+        path
+        for replacement in replacements
+        for path in replacement
+        if "feedback" in path.name
+    ]
+    assert transient_paths
+    assert all(path.parent == staging for path in transient_paths)
+    assert staging.is_dir()
+    assert list(staging.iterdir()) == []
 
 
 def test_promotion_failure_rolls_back_best_candidate_zip_and_ledger(
@@ -336,6 +475,31 @@ def test_invalid_submitted_zip_is_rejected_before_mutation(tmp_path: Path):
     assert paths["candidate_dir"].exists()
     assert paths["zip_path"].read_bytes() == b"not a zip"
     assert not paths["ledger_path"].exists()
+
+
+def test_candidate_modified_after_submission_is_rejected_without_mutation(tmp_path: Path):
+    data_root = _write_dataset(tmp_path)
+    paths = _paths(tmp_path)
+    _write_rendered(paths["candidate_dir"], (200, 10, 10))
+    submitted = _write_submitted_zip(data_root, paths["candidate_dir"], paths["zip_path"])
+    changed_image = paths["candidate_dir"] / "rendered" / "scene_a" / "target.JPG"
+    Image.new("RGB", (8, 6), color=(10, 10, 200)).save(changed_image, format="JPEG")
+    changed_payload = changed_image.read_bytes()
+
+    with pytest.raises(DataValidationError, match="does not match the submitted ZIP"):
+        feedback_module.process_feedback(
+            submission_id="candidate-changed",
+            dataset_id="vai_round2",
+            score=50.0,
+            data_root=data_root,
+            **paths,
+        )
+
+    assert changed_image.read_bytes() == changed_payload
+    assert not paths["best_dir"].exists()
+    assert paths["zip_path"].read_bytes() == submitted
+    assert not paths["ledger_path"].exists()
+    assert not list(tmp_path.glob(".submission.zip.feedback-identity-*.zip"))
 
 
 @pytest.mark.parametrize("field", ["zip_size_bytes", "zip_sha256"])

@@ -10,7 +10,6 @@ from PIL import Image
 
 from bts_nvs.exceptions import DataValidationError
 
-
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg"}
 DEFAULT_PSNR_MAX = 50.0
 MIN_LPIPS_IMAGE_SIDE = 32
@@ -168,7 +167,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pred", type=Path, required=True)
     parser.add_argument("--gt", type=Path, required=True)
     parser.add_argument("--out", type=Path, default=None, help="Optional JSON metrics output path.")
-    parser.add_argument("--match-by-stem", action="store_true", help="Match pred/gt images by filename stem, ignoring extension.")
+    parser.add_argument(
+        "--match-by-stem",
+        action="store_true",
+        help="Match pred/gt images by filename stem, ignoring extension.",
+    )
     parser.add_argument(
         "--psnr-max",
         type=float,

@@ -213,6 +213,43 @@ def test_render_targets_failure_preserves_previous_output(tmp_path: Path, monkey
     assert not list(tmp_path.glob(".candidate.*"))
 
 
+def test_render_targets_rejects_output_overlapping_checkpoint_or_targets(tmp_path: Path):
+    targets = {
+        "camera_model": "SIMPLE_PINHOLE",
+        "fl_x": 10.0,
+        "fl_y": 10.0,
+        "cx": 8.0,
+        "cy": 6.0,
+        "w": 16,
+        "h": 12,
+        "frames": [
+            {
+                "file_path": "target.jpg",
+                "transform_matrix": [
+                    [1, 0, 0, 0],
+                    [0, 1, 0, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1],
+                ],
+            }
+        ],
+    }
+    protected = tmp_path / "protected"
+    protected.mkdir()
+    checkpoint = protected / "config.yml"
+    checkpoint.write_text("config", encoding="utf-8")
+    target_file = protected / "target_cameras.json"
+    target_file.write_text(json.dumps(targets), encoding="utf-8")
+
+    with pytest.raises(DataValidationError, match="overlap"):
+        render_targets(
+            checkpoint=checkpoint,
+            targets=target_file,
+            output=protected,
+            dry_run=True,
+        )
+
+
 def test_rendered_image_directory_matches_nerfstudio_image_output_rule(tmp_path: Path):
     output_path = tmp_path / "submission" / "targets"
 

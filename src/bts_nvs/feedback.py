@@ -7,6 +7,7 @@ import os
 import shutil
 import tempfile
 import uuid
+import zipfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,6 +49,11 @@ def process_feedback(
     command: str | None = None,
     config: dict[str, Any] | None = None,
     metrics: dict[str, Any] | None = None,
+    seed: int | None = None,
+    iterations: int | None = None,
+    distortion: str | None = None,
+    jpeg_quality: int | None = None,
+    hardware: dict[str, Any] | None = None,
     hypothesis: str | None = None,
     next_action: str | None = None,
 ) -> dict[str, Any]:
@@ -76,6 +82,11 @@ def process_feedback(
         command=command,
         config=config,
         metrics=metrics,
+        seed=seed,
+        iterations=iterations,
+        distortion=distortion,
+        jpeg_quality=jpeg_quality,
+        hardware=hardware,
         hypothesis=hypothesis,
         next_action=next_action,
     )
@@ -85,7 +96,7 @@ def process_feedback(
     if any(record["submission_id"] == proposed["submission_id"] for record in existing_records):
         raise ledger.LedgerValidationError(f"submission_id already exists: {proposed['submission_id']}")
 
-    _validate_lifecycle_paths(
+    staging_path = _validate_lifecycle_paths(
         data_root=dataset_path,
         candidate_dir=candidate_path,
         best_dir=best_path,
@@ -106,9 +117,22 @@ def process_feedback(
     proposed["zip_size_bytes"] = actual_zip_size
     proposed["zip_sha256"] = actual_zip_sha256
     proposed = ledger._validate_record(proposed)
+    _verify_candidate_matches_submitted_zip(
+        data_root=dataset_path,
+        candidate_dir=candidate_path,
+        submitted_zip=submitted_zip,
+        submitted_sha256=actual_zip_sha256,
+        staging_dir=staging_path,
+    )
+    proposed["validator_status"] = "pass"
 
     incumbent = ledger.best_submission(dataset_id, ledger_path=history_path)
-    promote = incumbent is None or _candidate_is_better(proposed, incumbent)
+    proposed["score_delta_vs_best"] = (
+        None
+        if incumbent is None
+        else float(proposed["leaderboard_score"]) - float(incumbent["leaderboard_score"])
+    )
+    promote = incumbent is None or ledger._candidate_is_better(proposed, incumbent)
     if incumbent is not None and not best_path.is_dir():
         raise DataValidationError(f"Ledger has a best submission but best directory is missing: {best_path}")
     if not promote and not (best_path / "rendered").is_dir():
@@ -117,7 +141,7 @@ def process_feedback(
         )
 
     proposed["decision"] = "promote" if promote else "reject"
-    final_record = ledger._validate_record(proposed)
+    final_record = ledger._validate_record(proposed, add_defaults=True)
     ledger_state = _capture_ledger_state(history_path)
     if promote:
         return _promote_candidate(
@@ -127,6 +151,7 @@ def process_feedback(
             record=final_record,
             ledger_path=history_path,
             ledger_state=ledger_state,
+            staging_dir=staging_path,
         )
     return _reject_candidate(
         data_root=dataset_path,
@@ -136,6 +161,7 @@ def process_feedback(
         record=final_record,
         ledger_path=history_path,
         ledger_state=ledger_state,
+        staging_dir=staging_path,
     )
 
 
@@ -153,6 +179,11 @@ def _validated_record(
     command: str | None,
     config: dict[str, Any] | None,
     metrics: dict[str, Any] | None,
+    seed: int | None,
+    iterations: int | None,
+    distortion: str | None,
+    jpeg_quality: int | None,
+    hardware: dict[str, Any] | None,
     hypothesis: str | None,
     next_action: str | None,
 ) -> dict[str, Any]:
@@ -172,31 +203,16 @@ def _validated_record(
         "command": command,
         "config": config,
         "metrics": metrics,
+        "seed": seed,
+        "iterations": iterations,
+        "distortion": distortion,
+        "jpeg_quality": jpeg_quality,
+        "hardware": hardware,
         "hypothesis": hypothesis,
         "next_action": next_action,
     }
     record.update({key: value for key, value in optional.items() if value is not None})
-    return ledger._validate_record(record, add_defaults=True)
-
-
-def _candidate_is_better(candidate: dict[str, Any], incumbent: dict[str, Any]) -> bool:
-    candidate_score = float(candidate["leaderboard_score"])
-    incumbent_score = float(incumbent["leaderboard_score"])
-    if candidate_score != incumbent_score:
-        return candidate_score > incumbent_score
-
-    candidate_gpu = candidate.get("gpu_time_seconds")
-    incumbent_gpu = incumbent.get("gpu_time_seconds")
-    if candidate_gpu is None or incumbent_gpu is None:
-        return False
-    if float(candidate_gpu) != float(incumbent_gpu):
-        return float(candidate_gpu) < float(incumbent_gpu)
-
-    candidate_size = candidate.get("zip_size_bytes")
-    incumbent_size = incumbent.get("zip_size_bytes")
-    if candidate_size is None or incumbent_size is None:
-        return False
-    return int(candidate_size) < int(incumbent_size)
+    return ledger._validate_record(record)
 
 
 def _validate_zip_identity(data_root: Path, zip_path: Path) -> tuple[int, str]:
@@ -212,6 +228,69 @@ def _validate_zip_identity(data_root: Path, zip_path: Path) -> tuple[int, str]:
     return size, digest.hexdigest()
 
 
+def _verify_candidate_matches_submitted_zip(
+    *,
+    data_root: Path,
+    candidate_dir: Path,
+    submitted_zip: Path,
+    submitted_sha256: str,
+    staging_dir: Path,
+) -> None:
+    """Prove that the live candidate is the artifact whose ZIP received feedback."""
+
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=staging_dir,
+        prefix=f".{submitted_zip.name}.feedback-identity-",
+        suffix=".zip",
+    )
+    os.close(descriptor)
+    candidate_zip = Path(temporary_name)
+    try:
+        packaged = create_submission_zip(
+            data_root=data_root,
+            submission=candidate_dir / "rendered",
+            output=candidate_zip,
+            staging_dir=staging_dir,
+        )
+        if packaged.sha256 == submitted_sha256:
+            return
+        if _zip_members_are_identical(candidate_zip, submitted_zip):
+            return
+        raise DataValidationError(
+            "Candidate rendered output does not match the submitted ZIP; "
+            "refusing to update candidate, best, ZIP or ledger"
+        )
+    finally:
+        candidate_zip.unlink(missing_ok=True)
+
+
+def _zip_members_are_identical(first: Path, second: Path) -> bool:
+    """Compare exact member names and bytes while ignoring ZIP container metadata."""
+
+    try:
+        with zipfile.ZipFile(first) as first_archive, zipfile.ZipFile(second) as second_archive:
+            first_members = {info.filename: info for info in first_archive.infolist()}
+            second_members = {info.filename: info for info in second_archive.infolist()}
+            if set(first_members) != set(second_members):
+                return False
+            for name in sorted(first_members):
+                first_info = first_members[name]
+                second_info = second_members[name]
+                if first_info.file_size != second_info.file_size:
+                    return False
+                with first_archive.open(first_info) as first_stream, second_archive.open(second_info) as second_stream:
+                    while True:
+                        first_chunk = first_stream.read(1024 * 1024)
+                        second_chunk = second_stream.read(1024 * 1024)
+                        if first_chunk != second_chunk:
+                            return False
+                        if not first_chunk:
+                            break
+    except (EOFError, OSError, RuntimeError, zipfile.BadZipFile) as exc:
+        raise DataValidationError(f"Could not compare candidate and submitted ZIP contents: {exc}") from exc
+    return True
+
+
 def _validate_lifecycle_paths(
     *,
     data_root: Path,
@@ -219,7 +298,7 @@ def _validate_lifecycle_paths(
     best_dir: Path,
     zip_path: Path,
     ledger_path: Path,
-) -> None:
+) -> Path:
     for path, label in (
         (data_root, "data root"),
         (candidate_dir, "candidate directory"),
@@ -252,6 +331,8 @@ def _validate_lifecycle_paths(
     best_abs = _absolute(best_dir)
     if _overlaps(candidate_abs, best_abs):
         raise DataValidationError("Candidate and best directories must be separate, non-nested paths")
+    if candidate_abs.parent != best_abs.parent:
+        raise DataValidationError("Candidate and best directories must share one outputs parent")
     for path, label in ((zip_path, "submission ZIP"), (ledger_path, "ledger"), (data_root, "data root")):
         absolute = _absolute(path)
         if _overlaps(absolute, candidate_abs) or _overlaps(absolute, best_abs):
@@ -259,6 +340,16 @@ def _validate_lifecycle_paths(
 
     if candidate_dir.stat().st_dev != best_dir.parent.stat().st_dev:
         raise DataValidationError("Candidate and best directories must be on the same filesystem")
+
+    staging_dir = candidate_abs.parent / ".staging"
+    _assert_safe_path(staging_dir, "feedback staging directory")
+    if staging_dir.exists():
+        if not staging_dir.is_dir():
+            raise DataValidationError(f"Feedback staging path is not a directory: {staging_dir}")
+        _assert_safe_tree(staging_dir, "feedback staging directory")
+    else:
+        staging_dir.mkdir()
+    return staging_dir
 
 
 def _promote_candidate(
@@ -269,8 +360,9 @@ def _promote_candidate(
     record: dict[str, Any],
     ledger_path: Path,
     ledger_state: _LedgerState,
+    staging_dir: Path,
 ) -> dict[str, Any]:
-    backup = _unused_sibling(best_dir, "feedback-backup") if best_dir.exists() else None
+    backup = _unused_staging_path(staging_dir, "feedback-best-backup") if best_dir.exists() else None
     best_was_moved = False
     candidate_was_moved = False
     try:
@@ -305,12 +397,18 @@ def _reject_candidate(
     record: dict[str, Any],
     ledger_path: Path,
     ledger_state: _LedgerState,
+    staging_dir: Path,
 ) -> dict[str, Any]:
-    zip_backup = _copy_to_backup(zip_path)
-    rejected = _unused_sibling(candidate_dir, "feedback-rejected")
+    zip_backup = _copy_to_backup(zip_path, staging_dir=staging_dir)
+    rejected = _unused_staging_path(staging_dir, "feedback-rejected-candidate")
     candidate_was_moved = False
     try:
-        create_submission_zip(data_root=data_root, submission=best_dir / "rendered", output=zip_path)
+        create_submission_zip(
+            data_root=data_root,
+            submission=best_dir / "rendered",
+            output=zip_path,
+            staging_dir=staging_dir,
+        )
         os.replace(candidate_dir, rejected)
         candidate_was_moved = True
         result = ledger.append_record(record, ledger_path=ledger_path)
@@ -334,8 +432,12 @@ def _reject_candidate(
     return result
 
 
-def _copy_to_backup(path: Path) -> Path:
-    descriptor, name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.feedback-backup-", suffix=".tmp")
+def _copy_to_backup(path: Path, *, staging_dir: Path) -> Path:
+    descriptor, name = tempfile.mkstemp(
+        dir=staging_dir,
+        prefix=".feedback-submission-backup-",
+        suffix=".tmp",
+    )
     backup = Path(name)
     try:
         with os.fdopen(descriptor, "wb") as destination, path.open("rb") as source:
@@ -375,9 +477,9 @@ def _restore_ledger(path: Path, state: _LedgerState) -> None:
             pass
 
 
-def _unused_sibling(path: Path, purpose: str) -> Path:
+def _unused_staging_path(staging_dir: Path, purpose: str) -> Path:
     while True:
-        candidate = path.with_name(f".{path.name}.{purpose}-{uuid.uuid4().hex}")
+        candidate = staging_dir / f".{purpose}-{uuid.uuid4().hex}"
         if not candidate.exists():
             return candidate
 
@@ -454,6 +556,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--command")
     parser.add_argument("--config-json", type=ledger._json_object_argument)
     parser.add_argument("--metrics-json", type=ledger._json_object_argument)
+    parser.add_argument("--seed", type=ledger._nonnegative_int_argument)
+    parser.add_argument("--iterations", type=ledger._nonnegative_int_argument)
+    parser.add_argument("--distortion", choices=("auto", "on", "off"))
+    parser.add_argument("--jpeg-quality", type=ledger._jpeg_quality_argument)
+    parser.add_argument("--hardware-json", type=ledger._json_object_argument)
     parser.add_argument("--hypothesis")
     parser.add_argument("--next-action")
     return parser
@@ -481,6 +588,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             command=args.command,
             config=args.config_json,
             metrics=args.metrics_json,
+            seed=args.seed,
+            iterations=args.iterations,
+            distortion=args.distortion,
+            jpeg_quality=args.jpeg_quality,
+            hardware=args.hardware_json,
             hypothesis=args.hypothesis,
             next_action=args.next_action,
         )

@@ -23,6 +23,7 @@ _QUATERNION_NORM_TOLERANCE = 1e-4
 _HASH_CHUNK_SIZE = 1024 * 1024
 _CHECKED_MANIFEST_FIELDS = (
     "manifest_version",
+    "dataset_id",
     "digest_algorithm",
     "overall_sha256",
     "file_count",

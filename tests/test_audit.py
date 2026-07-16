@@ -127,3 +127,16 @@ def test_check_audit_manifest_is_read_only_and_detects_file_mismatch(tmp_path: P
     with pytest.raises(DataValidationError, match="Audit manifest mismatch"):
         check_audit_manifest(data_root, manifest_path)
     assert manifest_path.read_bytes() == original_manifest
+
+
+def test_check_audit_manifest_rejects_dataset_id_mismatch(tmp_path: Path):
+    data_root = tmp_path / "data"
+    _write_auditable_scene(data_root)
+    manifest_path = tmp_path / "manifest.json"
+    write_audit_manifest(data_root, manifest_path)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["dataset_id"] = "another_dataset"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(DataValidationError, match="dataset_id"):
+        check_audit_manifest(data_root, manifest_path)

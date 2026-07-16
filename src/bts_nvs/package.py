@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import hashlib
 import os
 import shutil
@@ -117,35 +116,3 @@ def _sha256_file(path: Path) -> str:
         while chunk := handle.read(1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Strictly validate and atomically package VAI/BTC predictions.")
-    parser.add_argument("--data-root", type=Path, required=True, help="VAI dataset root containing target CSV files.")
-    parser.add_argument(
-        "--submission",
-        type=Path,
-        required=True,
-        help="Directory containing exact scene/image outputs.",
-    )
-    parser.add_argument("--out", type=Path, required=True, help="ZIP file path to atomically replace after validation.")
-    parser.add_argument("--staging-dir", type=Path, help="Optional same-filesystem directory for the temporary ZIP.")
-    return parser
-
-
-def main() -> None:
-    args = build_arg_parser().parse_args()
-    result = create_submission_zip(
-        data_root=args.data_root,
-        submission=args.submission,
-        output=args.out,
-        staging_dir=args.staging_dir,
-    )
-    print(
-        f"Wrote {result.zip_path} with {result.image_count} JPEGs from {result.scene_count} scenes; "
-        f"sha256={result.sha256}"
-    )
-
-
-if __name__ == "__main__":
-    main()

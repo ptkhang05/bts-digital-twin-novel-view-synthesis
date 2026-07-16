@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import shutil
 import sys
 import tempfile
@@ -11,6 +10,7 @@ from PIL import Image
 
 from bts_nvs.camera import compute_vertical_fov_degrees
 from bts_nvs.exceptions import DataValidationError
+from bts_nvs.path_safety import assert_output_separate_from, promote_directory
 from bts_nvs.schema import frame_intrinsics, load_json, validate_transforms, write_json
 from bts_nvs.train import run_external_command
 
@@ -119,8 +119,15 @@ def render_targets(
     distortion: str = "auto",
 ) -> list[str]:
     output_dir = Path(output)
+    assert_output_separate_from(
+        output_dir,
+        ((checkpoint, "render checkpoint"), (targets, "target camera file")),
+        output_label="Render output directory",
+    )
     if distortion not in DISTORTION_MODES:
-        raise DataValidationError(f"Unknown distortion mode '{distortion}'. Expected one of: {', '.join(DISTORTION_MODES)}")
+        raise DataValidationError(
+            f"Unknown distortion mode '{distortion}'. Expected one of: {', '.join(DISTORTION_MODES)}"
+        )
     camera_path, target_names = build_camera_path(targets)
     use_exact_renderer = distortion == "on" or (distortion == "auto" and targets_have_lens_distortion(targets))
     if dry_run:
@@ -167,12 +174,6 @@ def _rename_rendered_images(render_dir: Path, output_dir: Path, target_names: li
         _write_submission_image(source, destination)
 
 
-def _remove_stale_submission_images(output_dir: Path) -> None:
-    for path in output_dir.iterdir():
-        if path.is_file() and path.suffix.lower() in SUBMISSION_IMAGE_SUFFIXES:
-            path.unlink()
-
-
 def _verify_rendered_images(output_dir: Path, target_names: list[str]) -> None:
     expected = set(target_names)
     actual = {
@@ -188,25 +189,7 @@ def _verify_rendered_images(output_dir: Path, target_names: list[str]) -> None:
 
 def _promote_render_directory(staging: Path, output: Path) -> None:
     """Promote a complete staging directory while keeping the previous output recoverable."""
-    backup = output.parent / f".{output.name}.backup"
-    if backup.exists():
-        if output.exists():
-            shutil.rmtree(backup)
-        else:
-            os.replace(backup, output)
-    if output.exists() and not output.is_dir():
-        raise DataValidationError(f"Render output exists and is not a directory: {output}")
-    if output.exists():
-        os.replace(output, backup)
-    try:
-        os.replace(staging, output)
-    except Exception:
-        if backup.exists() and not output.exists():
-            os.replace(backup, output)
-        raise
-    else:
-        if backup.exists():
-            shutil.rmtree(backup)
+    promote_directory(staging, output, label="Render")
 
 
 def _write_submission_image(source: Path, destination: Path) -> None:
@@ -226,12 +209,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint", type=Path, required=True, help="Path to Nerfstudio config.yml.")
     parser.add_argument("--targets", type=Path, required=True, help="Target camera JSON.")
     parser.add_argument("--out", type=Path, required=True, help="Submission image output directory.")
-    parser.add_argument("--dry-run", action="store_true", help="Write camera path and print command without running.")
+    parser.add_argument("--dry-run", action="store_true", help="Print the command without running or writing output.")
     parser.add_argument(
         "--distortion",
         choices=DISTORTION_MODES,
         default="auto",
-        help="Lens-distortion handling: auto detects non-zero coefficients, on forces exact rendering, off disables it.",
+        help=(
+            "Lens-distortion handling: auto detects non-zero coefficients, "
+            "on forces exact rendering, off disables it."
+        ),
     )
     return parser
 

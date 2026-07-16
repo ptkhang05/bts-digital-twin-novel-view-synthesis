@@ -118,12 +118,6 @@ def _save_submission_image(array: np.ndarray, destination: Path) -> None:
         raise DataValidationError(f"Unsupported target image extension for submission render: {destination.name}")
 
 
-def _remove_submission_images(output_dir: Path) -> None:
-    for path in output_dir.iterdir():
-        if path.is_file() and path.suffix.lower() in {".jpg", ".jpeg", ".png"}:
-            path.unlink()
-
-
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Render exact target intrinsics and restore source lens distortion.")
     parser.add_argument("--checkpoint", type=Path, required=True)

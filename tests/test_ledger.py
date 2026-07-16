@@ -93,7 +93,50 @@ def test_add_feedback_records_optional_reproducibility_metadata(tmp_path: Path):
     assert record["feedback_status"] == "complete"
     assert record["config"]["iterations"] == 30_000
     assert record["recorded_at"].endswith("Z")
+    assert record["seed"] is None
+    assert record["iterations"] is None
+    assert record["distortion"] is None
+    assert record["jpeg_quality"] is None
+    assert record["hardware"] is None
+    assert record["validator_status"] is None
+    assert record["score_delta_vs_best"] is None
+    assert record["reproducibility_status"] == "partial"
     assert load_records(ledger)[0] == record
+
+
+def test_add_feedback_accepts_complete_current_run_metadata(tmp_path: Path):
+    ledger = tmp_path / "submission_history.jsonl"
+    record = add_feedback(
+        submission_id="round2-complete",
+        dataset_id="vai_nvs_round2",
+        score=61.2,
+        ledger_path=ledger,
+        gpu_time_seconds=321.0,
+        zip_size_bytes=456,
+        zip_sha256="a" * 64,
+        dataset_manifest_sha256="b" * 64,
+        git_commit="c" * 40,
+        container_image_digest="sha256:" + "d" * 64,
+        command="python -m bts_nvs.train ...",
+        config={"rasterization": "classic"},
+        metrics={"scenes": {"chair": {"score": 0.5}}},
+        seed=42,
+        iterations=30_000,
+        distortion="auto",
+        jpeg_quality=95,
+        hardware={"gpu": "24 GB class"},
+        validator_status="pass",
+        score_delta_vs_best=1.2,
+        hypothesis="classic baseline",
+        decision="promote",
+        next_action="compare antialiased",
+    )
+
+    assert record["reproducibility_status"] == "complete"
+    assert record["seed"] == 42
+    assert record["iterations"] == 30_000
+    assert record["jpeg_quality"] == 95
+    assert record["score_delta_vs_best"] == 1.2
 
 
 def test_cli_add_feedback_then_best_outputs_json(tmp_path: Path, capsys):

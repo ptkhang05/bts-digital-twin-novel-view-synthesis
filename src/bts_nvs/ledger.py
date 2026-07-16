@@ -15,6 +15,30 @@ DEFAULT_LEDGER_PATH = Path("experiments/submission_history.jsonl")
 MAX_RECORD_BYTES = 1_000_000
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
+_CURRENT_RECORD_FIELDS = (
+    "dataset_manifest_sha256",
+    "git_commit",
+    "container_image_digest",
+    "config",
+    "command",
+    "seed",
+    "iterations",
+    "distortion",
+    "jpeg_quality",
+    "hardware",
+    "gpu_time_seconds",
+    "zip_size_bytes",
+    "zip_sha256",
+    "validator_status",
+    "metrics",
+    "score_delta_vs_best",
+    "hypothesis",
+    "decision",
+    "next_action",
+)
+_REPRODUCIBILITY_REQUIRED_FIELDS = tuple(
+    field for field in _CURRENT_RECORD_FIELDS if field != "score_delta_vs_best"
+)
 
 
 class LedgerValidationError(ValueError):
@@ -92,6 +116,13 @@ def add_feedback(
     command: str | None = None,
     config: dict[str, Any] | None = None,
     metrics: dict[str, Any] | None = None,
+    seed: int | None = None,
+    iterations: int | None = None,
+    distortion: str | None = None,
+    jpeg_quality: int | None = None,
+    hardware: dict[str, Any] | None = None,
+    validator_status: str | None = None,
+    score_delta_vs_best: float | None = None,
     hypothesis: str | None = None,
     decision: str | None = None,
     next_action: str | None = None,
@@ -114,6 +145,13 @@ def add_feedback(
         "command": command,
         "config": config,
         "metrics": metrics,
+        "seed": seed,
+        "iterations": iterations,
+        "distortion": distortion,
+        "jpeg_quality": jpeg_quality,
+        "hardware": hardware,
+        "validator_status": validator_status,
+        "score_delta_vs_best": score_delta_vs_best,
         "hypothesis": hypothesis,
         "decision": decision,
         "next_action": next_action,
@@ -178,6 +216,10 @@ def _validate_record(record: Any, add_defaults: bool = False) -> dict[str, Any]:
         default_status = "complete" if validated["leaderboard_score"] is not None else "incomplete"
         validated.setdefault("feedback_status", default_status)
         validated.setdefault("recorded_at", _utc_now())
+        for field in _CURRENT_RECORD_FIELDS:
+            validated.setdefault(field, None)
+        complete_reproducibility = all(validated[field] is not None for field in _REPRODUCIBILITY_REQUIRED_FIELDS)
+        validated.setdefault("reproducibility_status", "complete" if complete_reproducibility else "partial")
     score = validated.get("leaderboard_score")
     if score is not None:
         _validate_finite_number(score, "leaderboard_score")
@@ -192,14 +234,16 @@ def _validate_record(record: Any, add_defaults: bool = False) -> dict[str, Any]:
     if "recorded_at" in validated:
         _validate_timestamp(validated["recorded_at"])
     if "gpu_time_seconds" in validated:
-        _validate_finite_number(validated["gpu_time_seconds"], "gpu_time_seconds", minimum=0.0)
+        if validated["gpu_time_seconds"] is not None:
+            _validate_finite_number(validated["gpu_time_seconds"], "gpu_time_seconds", minimum=0.0)
     if "zip_size_bytes" in validated:
-        _validate_nonnegative_integer(validated["zip_size_bytes"], "zip_size_bytes")
+        if validated["zip_size_bytes"] is not None:
+            _validate_nonnegative_integer(validated["zip_size_bytes"], "zip_size_bytes")
     for field in ("zip_sha256", "dataset_manifest_sha256"):
-        if field in validated:
+        if field in validated and validated[field] is not None:
             _validate_sha256(validated[field], field)
-    for field in ("config", "metrics"):
-        if field in validated and not isinstance(validated[field], dict):
+    for field in ("config", "metrics", "hardware"):
+        if field in validated and validated[field] is not None and not isinstance(validated[field], dict):
             raise LedgerValidationError(f"{field} must be a JSON object")
     for field in (
         "git_commit",
@@ -209,9 +253,32 @@ def _validate_record(record: Any, add_defaults: bool = False) -> dict[str, Any]:
         "next_action",
         "reproducibility_status",
     ):
-        if field in validated and (not isinstance(validated[field], str) or len(validated[field]) > 65_536):
+        if field in validated and validated[field] is not None and (
+            not isinstance(validated[field], str) or len(validated[field]) > 65_536
+        ):
             raise LedgerValidationError(f"{field} must be a string of at most 65536 characters")
-    if "decision" in validated and validated["decision"] not in {"promote", "reject", "pending"}:
+    for field in ("seed", "iterations"):
+        if field in validated and validated[field] is not None:
+            _validate_nonnegative_integer(validated[field], field)
+    if "jpeg_quality" in validated and validated["jpeg_quality"] is not None:
+        _validate_nonnegative_integer(validated["jpeg_quality"], "jpeg_quality")
+        if not 1 <= validated["jpeg_quality"] <= 100:
+            raise LedgerValidationError("jpeg_quality must be between 1 and 100")
+    if "score_delta_vs_best" in validated and validated["score_delta_vs_best"] is not None:
+        _validate_finite_number(validated["score_delta_vs_best"], "score_delta_vs_best")
+    if "distortion" in validated and validated["distortion"] not in {None, "auto", "on", "off"}:
+        raise LedgerValidationError("distortion must be 'auto', 'on' or 'off'")
+    if "validator_status" in validated and validated["validator_status"] not in {
+        None,
+        "pass",
+        "fail",
+        "not_run",
+        "readable_zip",
+    }:
+        raise LedgerValidationError("validator_status must be 'pass', 'fail', 'not_run' or 'readable_zip'")
+    if "reproducibility_status" in validated and validated["reproducibility_status"] not in {"complete", "partial"}:
+        raise LedgerValidationError("reproducibility_status must be 'complete' or 'partial'")
+    if "decision" in validated and validated["decision"] not in {None, "promote", "reject", "pending"}:
         raise LedgerValidationError("decision must be 'promote', 'reject' or 'pending'")
 
     try:
@@ -305,6 +372,13 @@ def _nonnegative_int_argument(raw: str) -> int:
     return value
 
 
+def _jpeg_quality_argument(raw: str) -> int:
+    value = _nonnegative_int_argument(raw)
+    if not 1 <= value <= 100:
+        raise argparse.ArgumentTypeError("value must be between 1 and 100")
+    return value
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Append BTC feedback and rank immutable submission ledger records.")
     parser.add_argument(
@@ -328,6 +402,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     add.add_argument("--command")
     add.add_argument("--config-json", type=_json_object_argument)
     add.add_argument("--metrics-json", type=_json_object_argument)
+    add.add_argument("--seed", type=_nonnegative_int_argument)
+    add.add_argument("--iterations", type=_nonnegative_int_argument)
+    add.add_argument("--distortion", choices=("auto", "on", "off"))
+    add.add_argument("--jpeg-quality", type=_jpeg_quality_argument)
+    add.add_argument("--hardware-json", type=_json_object_argument)
+    add.add_argument("--validator-status", choices=("pass", "fail", "not_run", "readable_zip"))
+    add.add_argument("--score-delta-vs-best", type=_finite_float_argument)
     add.add_argument("--hypothesis")
     add.add_argument("--decision", choices=("promote", "reject", "pending"))
     add.add_argument("--next-action")
@@ -356,6 +437,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 command=args.command,
                 config=args.config_json,
                 metrics=args.metrics_json,
+                seed=args.seed,
+                iterations=args.iterations,
+                distortion=args.distortion,
+                jpeg_quality=args.jpeg_quality,
+                hardware=args.hardware_json,
+                validator_status=args.validator_status,
+                score_delta_vs_best=args.score_delta_vs_best,
                 hypothesis=args.hypothesis,
                 decision=args.decision,
                 next_action=args.next_action,

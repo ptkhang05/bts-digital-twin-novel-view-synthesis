@@ -1,6 +1,5 @@
-from pathlib import Path
-
 import math
+from pathlib import Path
 
 from PIL import Image
 
