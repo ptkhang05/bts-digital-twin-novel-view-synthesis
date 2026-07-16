@@ -134,9 +134,13 @@ def test_ingest_rejects_unsafe_member_paths_without_extracting(tmp_path: Path, u
     _write_archive(archive, source, manifest, extra={unsafe_member: b"hostile"})
     if "\\" in unsafe_member:
         normalized_name = unsafe_member.replace("\\", "/").encode()
+        unsafe_name = unsafe_member.encode()
         payload = archive.read_bytes()
-        assert normalized_name in payload
-        archive.write_bytes(payload.replace(normalized_name, unsafe_member.encode()))
+        if unsafe_name not in payload:
+            assert normalized_name in payload
+            payload = payload.replace(normalized_name, unsafe_name)
+            archive.write_bytes(payload)
+        assert unsafe_name in archive.read_bytes()
     destination = _destination(tmp_path)
 
     with pytest.raises(DataValidationError, match="Unsafe ZIP member"):
