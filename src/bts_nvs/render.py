@@ -10,7 +10,6 @@ from pathlib import Path
 from PIL import Image
 
 from bts_nvs.camera import compute_vertical_fov_degrees
-from bts_nvs.contest import DEFAULT_CONTEST_PHASE, validate_target_view_count
 from bts_nvs.exceptions import DataValidationError
 from bts_nvs.schema import frame_intrinsics, load_json, validate_transforms, write_json
 from bts_nvs.train import run_external_command
@@ -23,13 +22,9 @@ DISTORTION_MODES = ("auto", "on", "off")
 
 def build_camera_path(
     targets_path: Path | str,
-    strict_contest: bool = False,
-    contest_phase: str = DEFAULT_CONTEST_PHASE,
 ) -> tuple[dict, list[str]]:
     targets_file = Path(targets_path)
     targets = validate_transforms(load_json(targets_file))
-    if strict_contest:
-        validate_target_view_count(len(targets["frames"]), phase=contest_phase)
     names: list[str] = []
     camera_entries: list[dict] = []
     first_intrinsics = frame_intrinsics(targets["frames"][0], targets)
@@ -121,18 +116,12 @@ def render_targets(
     targets: Path | str,
     output: Path | str,
     dry_run: bool = False,
-    strict_contest: bool = False,
-    contest_phase: str = DEFAULT_CONTEST_PHASE,
     distortion: str = "auto",
 ) -> list[str]:
     output_dir = Path(output)
     if distortion not in DISTORTION_MODES:
         raise DataValidationError(f"Unknown distortion mode '{distortion}'. Expected one of: {', '.join(DISTORTION_MODES)}")
-    camera_path, target_names = build_camera_path(
-        targets,
-        strict_contest=strict_contest,
-        contest_phase=contest_phase,
-    )
+    camera_path, target_names = build_camera_path(targets)
     use_exact_renderer = distortion == "on" or (distortion == "auto" and targets_have_lens_distortion(targets))
     if dry_run:
         if use_exact_renderer:
@@ -238,17 +227,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--targets", type=Path, required=True, help="Target camera JSON.")
     parser.add_argument("--out", type=Path, required=True, help="Submission image output directory.")
     parser.add_argument("--dry-run", action="store_true", help="Write camera path and print command without running.")
-    parser.add_argument("--strict-contest", action="store_true", help="Enforce target-view limits from the selected rule set.")
     parser.add_argument(
         "--distortion",
         choices=DISTORTION_MODES,
         default="auto",
         help="Lens-distortion handling: auto detects non-zero coefficients, on forces exact rendering, off disables it.",
-    )
-    parser.add_argument(
-        "--contest-phase",
-        default=DEFAULT_CONTEST_PHASE,
-        help="Contest rule set for --strict-contest. Known values: phase1, overview.",
     )
     return parser
 
@@ -260,8 +243,6 @@ def main() -> None:
         args.targets,
         args.out,
         dry_run=args.dry_run,
-        strict_contest=args.strict_contest,
-        contest_phase=args.contest_phase,
         distortion=args.distortion,
     )
     print(" ".join(command))
