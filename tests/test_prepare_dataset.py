@@ -1,7 +1,9 @@
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
+from bts_nvs.exceptions import DataValidationError
 from bts_nvs.prepare_dataset import prepare_dataset
 
 
@@ -21,7 +23,7 @@ def _write_tiny_vai_scene(scene: Path, test_pose_name: str = "test_poses.csv") -
     )
 
 
-def test_prepare_dataset_processes_each_vai_scene_under_root(tmp_path: Path):
+def test_prepare_dataset_processes_each_vai_scene_under_current_dataset_root(tmp_path: Path):
     root = tmp_path / "public_set"
     _write_tiny_vai_scene(root / "scene_a")
     _write_tiny_vai_scene(root / "scene_b")
@@ -34,12 +36,9 @@ def test_prepare_dataset_processes_each_vai_scene_under_root(tmp_path: Path):
     assert (tmp_path / "processed" / "scene_b" / "target_cameras.json").exists()
 
 
-def test_prepare_dataset_accepts_singular_test_pose_csv_name(tmp_path: Path):
+def test_prepare_dataset_rejects_noncanonical_singular_test_pose_csv_name(tmp_path: Path):
     root = tmp_path / "public_set"
     _write_tiny_vai_scene(root / "scene_a", test_pose_name="test_pose.csv")
 
-    result = prepare_dataset(root=root, output=tmp_path / "processed")
-
-    assert result.scene_count == 1
-    assert result.target_count == 1
-    assert (tmp_path / "processed" / "scene_a" / "target_cameras.json").exists()
+    with pytest.raises(DataValidationError, match="test/test_poses.csv"):
+        prepare_dataset(root=root, output=tmp_path / "processed")

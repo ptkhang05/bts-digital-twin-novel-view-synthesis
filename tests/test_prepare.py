@@ -1,4 +1,5 @@
 import json
+import struct
 from pathlib import Path
 
 import pytest
@@ -100,15 +101,7 @@ def test_prepare_scene_rejects_missing_frame_image(tmp_path: Path):
         prepare_scene(scene=scene, output=tmp_path / "processed")
 
 
-def test_prepare_scene_strict_contest_rejects_too_few_phase1_training_images(tmp_path: Path):
-    scene = tmp_path / "raw"
-    _write_minimal_scene(scene)
-
-    with pytest.raises(DataValidationError, match="100-300"):
-        prepare_scene(scene=scene, output=tmp_path / "processed", strict_contest=True)
-
-
-def test_prepare_scene_supports_vai_phase1_layout_and_filters_sparse_images(tmp_path: Path):
+def test_prepare_scene_supports_vai_layout_and_filters_sparse_images_by_exact_train_filenames(tmp_path: Path):
     scene = tmp_path / "official_scene"
     sparse = scene / "train" / "sparse" / "0"
     sparse.mkdir(parents=True)
@@ -129,7 +122,9 @@ def test_prepare_scene_supports_vai_phase1_layout_and_filters_sparse_images(tmp_
         "\n",
         encoding="utf-8",
     )
-    (sparse / "points3D.txt").write_text("", encoding="utf-8")
+    (sparse / "points3D.txt").write_text("1 1 2 3 10 20 30 0.5\n", encoding="utf-8")
+    source_ply = b"ply\nformat ascii 1.0\ncomment official source\nelement vertex 1\nend_header\n"
+    (sparse / "points3D.ply").write_bytes(source_ply)
     (scene / "test" / "test_poses.csv").write_text(
         "image_name,qw,qx,qy,qz,tx,ty,tz,fx,fy,cx,cy,width,height\n"
         "target.JPG,1,0,0,0,1,2,3,10,11,8,6,16,12\n",
@@ -140,13 +135,46 @@ def test_prepare_scene_supports_vai_phase1_layout_and_filters_sparse_images(tmp_
 
     transforms = json.loads((tmp_path / "processed" / "transforms.json").read_text(encoding="utf-8"))
     targets = json.loads((tmp_path / "processed" / "target_cameras.json").read_text(encoding="utf-8"))
+    metadata = json.loads((tmp_path / "processed" / "metadata.json").read_text(encoding="utf-8"))
     assert result.image_count == 1
+    assert result.source_format == "vai"
     assert transforms["frames"][0]["file_path"] == "images/keep.png"
     assert [frame["file_path"] for frame in transforms["frames"]] == ["images/keep.png"]
     assert result.target_count == 1
     assert targets["frames"][0]["file_path"] == "target.JPG"
     assert targets["frames"][0]["transform_matrix"][0][3] == -1.0
     assert targets["k1"] == -0.1
+    assert transforms["ply_file_path"] == "sparse_pc.ply"
+    assert (tmp_path / "processed" / "sparse_pc.ply").read_bytes() == source_ply
+    assert metadata["source_scene"] == "official_scene"
+    assert not Path(metadata["source_scene"]).is_absolute()
+
+
+def test_prepare_scene_generates_sparse_ply_from_colmap_binary_when_source_ply_is_missing(tmp_path: Path):
+    scene = tmp_path / "colmap_scene"
+    sparse = scene / "sparse" / "0"
+    images = scene / "images"
+    sparse.mkdir(parents=True)
+    images.mkdir()
+    Image.new("RGB", (16, 12), color=(10, 20, 30)).save(images / "frame.png")
+    (sparse / "cameras.bin").write_bytes(
+        struct.pack("<QiiQQdddd", 1, 1, 1, 16, 12, 10.0, 11.0, 8.0, 6.0)
+    )
+    (sparse / "images.bin").write_bytes(
+        struct.pack("<Qidddddddi", 1, 1, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, -2.0, 1)
+        + b"frame.png\x00"
+        + struct.pack("<Q", 0)
+    )
+    (sparse / "points3D.bin").write_bytes(
+        struct.pack("<QQdddBBBdQ", 1, 1, 1.0, 2.0, 3.0, 10, 20, 30, 0.5, 0)
+    )
+
+    result = prepare_scene(scene=scene, output=tmp_path / "processed")
+
+    transforms = json.loads((tmp_path / "processed" / "transforms.json").read_text(encoding="utf-8"))
+    assert result.point_count == 1
+    assert transforms["ply_file_path"] == "sparse_pc.ply"
+    assert (tmp_path / "processed" / "sparse_pc.ply").read_text(encoding="ascii").startswith("ply\n")
 
 
 def test_prepare_scene_can_write_filename_holdout_split(tmp_path: Path):

@@ -1,8 +1,11 @@
 from pathlib import Path
 
+import numpy as np
+import pytest
 from PIL import Image
 
-from bts_nvs.nearest_view import render_nearest_dataset
+from bts_nvs.exceptions import DataValidationError
+from bts_nvs.nearest_view import _read_target_poses, render_nearest_dataset
 
 
 def _write_nearest_scene(scene: Path, test_pose_name: str = "test_poses.csv") -> None:
@@ -111,14 +114,12 @@ def test_render_nearest_dataset_writes_exact_target_name_by_default(tmp_path: Pa
         assert image.size == (2, 2)
 
 
-def test_render_nearest_dataset_accepts_singular_test_pose_csv_name(tmp_path: Path):
+def test_render_nearest_dataset_rejects_noncanonical_singular_test_pose_csv_name(tmp_path: Path):
     root = tmp_path / "private_set1"
     _write_nearest_scene(root / "scene_a", test_pose_name="test_pose.csv")
 
-    result = render_nearest_dataset(root=root, output=tmp_path / "submission")
-
-    assert result.image_count == 1
-    assert (tmp_path / "submission" / "scene_a" / "target.JPG").exists()
+    with pytest.raises(DataValidationError, match="test/test_poses.csv"):
+        render_nearest_dataset(root=root, output=tmp_path / "submission")
 
 
 def test_render_nearest_dataset_can_force_png_stem_names(tmp_path: Path):
@@ -132,7 +133,20 @@ def test_render_nearest_dataset_can_force_png_stem_names(tmp_path: Path):
     with Image.open(output) as image:
         assert image.format == "PNG"
         assert image.size == (2, 2)
-        assert image.getpixel((0, 0)) == (0, 0, 255)
+        assert image.getpixel((0, 0)) == (255, 0, 0)
+
+
+def test_read_target_poses_converts_colmap_world_to_camera_translation_to_camera_center(tmp_path: Path):
+    poses = tmp_path / "test_poses.csv"
+    poses.write_text(
+        "image_name,qw,qx,qy,qz,tx,ty,tz,fx,fy,cx,cy,width,height\n"
+        "target.JPG,0,0,0,1,1,2,3,10,11,8,6,16,12\n",
+        encoding="utf-8",
+    )
+
+    target = _read_target_poses(poses)[0]
+
+    np.testing.assert_allclose(target.camera_center, np.asarray([1.0, 2.0, -3.0]))
 
 
 def test_render_nearest_dataset_temporal_blend_uses_bracketing_frame_indices(tmp_path: Path):

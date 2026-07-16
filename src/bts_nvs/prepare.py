@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from bts_nvs.colmap import colmap_model_to_nerfstudio, find_colmap_sparse_dir, read_colmap_model, write_ascii_ply
-from bts_nvs.contest import DEFAULT_CONTEST_PHASE, validate_target_view_count, validate_training_image_count
 from bts_nvs.exceptions import DataValidationError
 from bts_nvs.schema import (
     DISTORTION_KEYS,
@@ -16,7 +15,7 @@ from bts_nvs.schema import (
     validate_transforms,
     write_json,
 )
-from bts_nvs.vai import find_test_poses_csv, is_vai_phase1_scene, test_poses_csv_to_transforms, train_image_names
+from bts_nvs.vai import find_test_poses_csv, is_vai_scene, test_poses_csv_to_transforms, train_image_names
 
 
 @dataclass(frozen=True)
@@ -37,8 +36,6 @@ def prepare_scene(
     copy_mode: str = "copy",
     overwrite: bool = False,
     holdout_interval: int = 0,
-    strict_contest: bool = False,
-    contest_phase: str = DEFAULT_CONTEST_PHASE,
 ) -> PreparedScene:
     scene_path = Path(scene)
     output_path = Path(output)
@@ -52,8 +49,6 @@ def prepare_scene(
 
     source_format, transforms, point_count = _load_scene_transforms(scene_path, output_path)
     transforms = validate_transforms(transforms, scene=scene_path)
-    if strict_contest:
-        validate_training_image_count(len(transforms["frames"]), phase=contest_phase)
     _copy_images(scene_path, output_path, transforms, copy_mode=copy_mode)
     if holdout_interval:
         _apply_holdout_split(transforms, holdout_interval=holdout_interval)
@@ -62,15 +57,13 @@ def prepare_scene(
         scene_path,
         output_path,
         training_transforms=transforms,
-        strict_contest=strict_contest,
-        contest_phase=contest_phase,
     )
 
     transforms_path = output_path / "transforms.json"
     metadata_path = output_path / "metadata.json"
     write_json(transforms_path, transforms)
     metadata = {
-        "source_scene": str(scene_path.resolve()),
+        "source_scene": scene_path.name,
         "source_format": source_format,
         "camera_convention": "nerfstudio-opengl-c2w",
         "image_count": len(transforms["frames"]),
@@ -93,16 +86,14 @@ def prepare_scene(
 
 
 def _load_scene_transforms(scene: Path, output: Path) -> tuple[str, dict, int]:
-    if is_vai_phase1_scene(scene):
-        model = read_colmap_model(scene / "train" / "sparse" / "0")
+    if is_vai_scene(scene):
+        sparse_dir = scene / "train" / "sparse" / "0"
+        model = read_colmap_model(sparse_dir)
         transforms, points = colmap_model_to_nerfstudio(scene, model, image_names=train_image_names(scene))
-        if points:
-            ply_path = output / "sparse_pc.ply"
-            point_count = write_ascii_ply(points, ply_path)
+        point_count = _prepare_sparse_point_cloud(sparse_dir, output, points)
+        if (output / "sparse_pc.ply").exists():
             transforms["ply_file_path"] = "sparse_pc.ply"
-        else:
-            point_count = 0
-        return "vai_phase1", transforms, point_count
+        return "vai", transforms, point_count
 
     for filename in ("train_cameras.json", "transforms.json"):
         path = scene / filename
@@ -113,17 +104,48 @@ def _load_scene_transforms(scene: Path, output: Path) -> tuple[str, dict, int]:
     if sparse_dir is not None:
         model = read_colmap_model(sparse_dir)
         transforms, points = colmap_model_to_nerfstudio(scene, model)
-        if points:
-            ply_path = output / "sparse_pc.ply"
-            point_count = write_ascii_ply(points, ply_path)
+        point_count = _prepare_sparse_point_cloud(sparse_dir, output, points)
+        if (output / "sparse_pc.ply").exists():
             transforms["ply_file_path"] = "sparse_pc.ply"
-        else:
-            point_count = 0
         return "colmap", transforms, point_count
 
     raise DataValidationError(
         "Could not detect scene input. Expected train_cameras.json, transforms.json, or COLMAP sparse files."
     )
+
+
+def _prepare_sparse_point_cloud(sparse_dir: Path, output: Path, points: list) -> int:
+    destination = output / "sparse_pc.ply"
+    source = sparse_dir / "points3D.ply"
+    if source.is_file():
+        try:
+            destination.hardlink_to(source)
+        except OSError:
+            shutil.copy2(source, destination)
+        return len(points) or _ply_vertex_count(source)
+    if points:
+        return write_ascii_ply(points, destination)
+    return 0
+
+
+def _ply_vertex_count(path: Path) -> int:
+    with path.open("rb") as handle:
+        for _ in range(100):
+            raw = handle.readline()
+            if not raw:
+                break
+            try:
+                line = raw.decode("ascii").strip()
+            except UnicodeDecodeError as exc:
+                raise DataValidationError(f"Invalid PLY header in {path}") from exc
+            if line.startswith("element vertex "):
+                try:
+                    return int(line.split()[-1])
+                except ValueError as exc:
+                    raise DataValidationError(f"Invalid PLY vertex count in {path}: {line}") from exc
+            if line == "end_header":
+                break
+    raise DataValidationError(f"PLY header does not declare an element vertex count: {path}")
 
 
 def _copy_images(scene: Path, output: Path, transforms: dict, copy_mode: str) -> None:
@@ -155,13 +177,11 @@ def _copy_target_cameras(
     scene: Path,
     output: Path,
     training_transforms: dict,
-    strict_contest: bool,
-    contest_phase: str,
 ) -> tuple[Path | None, int | None]:
     target_path = scene / "target_cameras.json"
     if target_path.exists():
         targets = validate_transforms(load_json(target_path))
-    elif is_vai_phase1_scene(scene):
+    elif is_vai_scene(scene):
         targets = validate_transforms(test_poses_csv_to_transforms(find_test_poses_csv(scene)))
         for key in DISTORTION_KEYS:
             if key in training_transforms:
@@ -169,8 +189,6 @@ def _copy_target_cameras(
     else:
         return None, None
     target_count = len(targets["frames"])
-    if strict_contest:
-        validate_target_view_count(target_count, phase=contest_phase)
     output_path = output / "target_cameras.json"
     write_json(output_path, targets)
     return output_path, target_count
@@ -208,16 +226,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Optional filename split: every Nth frame becomes val/test, the rest train.",
     )
     parser.add_argument("--overwrite", action="store_true", help="Replace a non-empty output directory.")
-    parser.add_argument(
-        "--strict-contest",
-        action="store_true",
-        help="Enforce the selected Viettel AI Race rule set.",
-    )
-    parser.add_argument(
-        "--contest-phase",
-        default=DEFAULT_CONTEST_PHASE,
-        help="Contest rule set for --strict-contest. Known values: phase1, overview.",
-    )
     return parser
 
 
@@ -229,8 +237,6 @@ def main() -> None:
         copy_mode=args.copy_mode,
         overwrite=args.overwrite,
         holdout_interval=args.holdout_interval,
-        strict_contest=args.strict_contest,
-        contest_phase=args.contest_phase,
     )
     print(f"Wrote {result.transforms_path} with {result.image_count} frames")
 

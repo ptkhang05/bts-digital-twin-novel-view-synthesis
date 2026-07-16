@@ -11,7 +11,19 @@ from bts_nvs.train import build_train_command, default_train_log_path, run_exter
 def test_build_train_command_uses_splatfacto_for_fast_preset(tmp_path: Path):
     command = build_train_command(scene=tmp_path / "processed", preset="fast")
 
-    assert command == ["ns-train", "splatfacto", "--data", str(tmp_path / "processed")]
+    assert command == [
+        "ns-train",
+        "splatfacto",
+        "nerfstudio-data",
+        "--data",
+        str(tmp_path / "processed"),
+        "--orientation-method",
+        "none",
+        "--center-method",
+        "none",
+        "--auto-scale-poses",
+        "False",
+    ]
 
 
 def test_build_train_command_uses_splatfacto_big_for_quality_preset(tmp_path: Path):
@@ -30,8 +42,15 @@ def test_build_train_command_enables_antialiasing_for_quality_aa_preset(tmp_path
         "splatfacto-big",
         "--pipeline.model.rasterize-mode",
         "antialiased",
+        "nerfstudio-data",
         "--data",
         str(tmp_path / "processed"),
+        "--orientation-method",
+        "none",
+        "--center-method",
+        "none",
+        "--auto-scale-poses",
+        "False",
     ]
 
 
@@ -52,14 +71,14 @@ def test_warn_extended_training_accepts_default_iteration_budget():
     assert caught == []
 
 
-def test_build_train_command_can_disable_nerfstudio_pose_normalization(tmp_path: Path):
+def test_build_train_command_can_enable_pose_normalization_only_as_debug_override(tmp_path: Path):
     scene = tmp_path / "processed"
 
     command = build_train_command(
         scene=scene,
         preset="fast",
         extra_args=["--max-num-iterations", "5000"],
-        disable_pose_normalization=True,
+        debug_allow_pose_normalization=True,
     )
 
     assert command == [
@@ -67,15 +86,8 @@ def test_build_train_command_can_disable_nerfstudio_pose_normalization(tmp_path:
         "splatfacto",
         "--max-num-iterations",
         "5000",
-        "nerfstudio-data",
         "--data",
         str(scene),
-        "--orientation-method",
-        "none",
-        "--center-method",
-        "none",
-        "--auto-scale-poses",
-        "False",
     ]
 
 

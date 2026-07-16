@@ -12,7 +12,7 @@ from PIL import Image
 from bts_nvs.camera import qvec_to_rotmat
 from bts_nvs.colmap import read_colmap_model
 from bts_nvs.exceptions import DataValidationError
-from bts_nvs.vai import TEST_POSE_COLUMNS, discover_vai_phase1_scenes, find_test_poses_csv, train_image_names
+from bts_nvs.vai import TEST_POSE_COLUMNS, discover_vai_scenes, find_test_poses_csv, train_image_names
 
 JPEG_SUFFIXES = {".jpg", ".jpeg"}
 IMAGE_FORMATS = {"auto", "jpeg", "png"}
@@ -58,7 +58,7 @@ def render_nearest_dataset(
     output_path = Path(output)
     scene_count = 0
     image_count = 0
-    for scene in discover_vai_phase1_scenes(root_path):
+    for scene in discover_vai_scenes(root_path):
         image_count += render_nearest_scene(
             scene,
             output_path / scene.name,
@@ -154,17 +154,19 @@ def _read_target_poses(path: Path) -> list[TargetPose]:
                 raise DataValidationError(f"Missing image_name in test_poses.csv row {row_index}")
             width = _positive_int(row["width"], "width", row_index)
             height = _positive_int(row["height"], "height", row_index)
+            qvec = np.asarray(
+                [_float(row[key], key, row_index) for key in ("qw", "qx", "qy", "qz")],
+                dtype=float,
+            )
+            tvec = np.asarray(
+                [_float(row[key], key, row_index) for key in ("tx", "ty", "tz")],
+                dtype=float,
+            )
+            rotation = qvec_to_rotmat(qvec)
             targets.append(
                 TargetPose(
                     image_name=image_name,
-                    camera_center=np.asarray(
-                        [
-                            _float(row["tx"], "tx", row_index),
-                            _float(row["ty"], "ty", row_index),
-                            _float(row["tz"], "tz", row_index),
-                        ],
-                        dtype=float,
-                    ),
+                    camera_center=-rotation.T @ tvec,
                     frame_index=_extract_frame_index(image_name),
                     width=width,
                     height=height,
@@ -235,8 +237,16 @@ def _bracketing_train_views(
         return None, None
     low_candidates = [view for view in indexed_views if (view.frame_index or 0) <= target.frame_index]
     high_candidates = [view for view in indexed_views if (view.frame_index or 0) >= target.frame_index]
-    low_view = max(low_candidates, key=lambda view: (view.frame_index or 0, view.image_path.name)) if low_candidates else None
-    high_view = min(high_candidates, key=lambda view: (view.frame_index or 0, view.image_path.name)) if high_candidates else None
+    low_view = (
+        max(low_candidates, key=lambda view: (view.frame_index or 0, view.image_path.name))
+        if low_candidates
+        else None
+    )
+    high_view = (
+        min(high_candidates, key=lambda view: (view.frame_index or 0, view.image_path.name))
+        if high_candidates
+        else None
+    )
     if low_view is None:
         low_view = high_view
     if high_view is None:
@@ -380,9 +390,9 @@ def _positive_int(value: str, key: str, row_index: int) -> int:
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Create a low-cost nearest-training-view image submission for VAI phase1 scenes."
+        description="Create a low-cost nearest-training-view image submission for VAI scenes."
     )
-    parser.add_argument("--root", type=Path, required=True, help="Dataset root, e.g. VAI_NVS_DATA/phase1/private_set1.")
+    parser.add_argument("--root", type=Path, required=True, help="Dataset root, e.g. VAI_NVS_DATA_ROUND2.")
     parser.add_argument("--out", type=Path, required=True, help="Output directory containing scene_id/* image files.")
     parser.add_argument(
         "--name-policy",

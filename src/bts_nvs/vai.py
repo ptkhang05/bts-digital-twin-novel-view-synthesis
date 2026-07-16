@@ -24,32 +24,33 @@ TEST_POSE_COLUMNS = (
     "height",
 )
 
-TEST_POSE_FILENAMES = ("test_poses.csv", "test_pose.csv")
+TEST_POSE_FILENAME = "test_poses.csv"
 
 
-def is_vai_phase1_scene(scene: Path) -> bool:
+def is_vai_scene(scene: Path) -> bool:
     return (scene / "train" / "images").is_dir() and (scene / "train" / "sparse" / "0").is_dir()
 
 
-def discover_vai_phase1_scenes(root: Path) -> list[Path]:
-    if is_vai_phase1_scene(root):
+def discover_vai_scenes(root: Path) -> list[Path]:
+    if is_vai_scene(root):
         return [root]
     if not root.is_dir():
         raise DataValidationError(f"Dataset root does not exist: {root}")
-    scenes = [path for path in sorted(root.iterdir()) if path.is_dir() and is_vai_phase1_scene(path)]
+    scenes = [
+        path
+        for path in sorted(root.iterdir(), key=lambda candidate: candidate.name)
+        if path.is_dir() and is_vai_scene(path)
+    ]
     if not scenes:
-        raise DataValidationError(f"No VAI phase1 scenes found under {root}")
+        raise DataValidationError(f"No VAI scenes found under {root}")
     return scenes
 
 
 def find_test_poses_csv(scene: Path) -> Path:
-    test_dir = scene / "test"
-    for filename in TEST_POSE_FILENAMES:
-        candidate = test_dir / filename
-        if candidate.exists():
-            return candidate
-    expected = ", ".join(f"test/{filename}" for filename in TEST_POSE_FILENAMES)
-    raise DataValidationError(f"VAI scene is missing target pose CSV. Expected one of: {expected} under {scene}")
+    candidate = scene / "test" / TEST_POSE_FILENAME
+    if candidate.is_file():
+        return candidate
+    raise DataValidationError(f"VAI scene is missing target pose CSV: test/{TEST_POSE_FILENAME} under {scene}")
 
 
 def train_image_names(scene: Path) -> set[str]:
