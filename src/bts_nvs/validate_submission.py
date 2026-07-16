@@ -2,17 +2,19 @@ from __future__ import annotations
 
 import argparse
 import csv
+import stat
 import zipfile
+from collections import Counter
 from dataclasses import dataclass, field
 from io import BytesIO
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from PIL import Image, UnidentifiedImageError
 
 from bts_nvs.exceptions import DataValidationError
-from bts_nvs.vai import TEST_POSE_COLUMNS, discover_vai_phase1_scenes, find_test_poses_csv
+from bts_nvs.vai import TEST_POSE_COLUMNS, discover_vai_scenes, find_test_poses_csv
 
-SUBMISSION_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg"}
+SUBMISSION_IMAGE_SUFFIXES = {".jpg", ".jpeg"}
 
 
 @dataclass(frozen=True)
@@ -51,7 +53,7 @@ def validate_submission(data_root: Path | str, submission: Path | str) -> Submis
 
 def _expected_outputs(data_root: Path) -> dict[str, dict[str, ExpectedImage]]:
     scenes: dict[str, dict[str, ExpectedImage]] = {}
-    for scene in discover_vai_phase1_scenes(data_root):
+    for scene in discover_vai_scenes(data_root):
         scenes[scene.name] = _read_expected_images(find_test_poses_csv(scene))
     return scenes
 
@@ -60,17 +62,23 @@ def _read_expected_images(csv_path: Path) -> dict[str, ExpectedImage]:
     if not csv_path.exists():
         raise DataValidationError(f"target pose CSV does not exist: {csv_path}")
     expected: dict[str, ExpectedImage] = {}
-    with csv_path.open("r", encoding="utf-8", newline="") as handle:
+    casefolded_names: set[str] = set()
+    with csv_path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
-        missing = [column for column in TEST_POSE_COLUMNS if column not in (reader.fieldnames or [])]
-        if missing:
-            raise DataValidationError(f"{csv_path} is missing required columns: {', '.join(missing)}")
+        if tuple(reader.fieldnames or ()) != TEST_POSE_COLUMNS:
+            raise DataValidationError(
+                f"{csv_path} must contain exactly these columns in order: {', '.join(TEST_POSE_COLUMNS)}"
+            )
         for row_index, row in enumerate(reader, start=2):
-            image_name = Path(row["image_name"].strip()).name
-            if not image_name:
-                raise DataValidationError(f"Missing image_name in {csv_path} row {row_index}")
-            if image_name in expected:
+            image_name = row["image_name"]
+            _validate_safe_basename(image_name, csv_path, row_index)
+            if Path(image_name).suffix.lower() not in SUBMISSION_IMAGE_SUFFIXES:
+                raise DataValidationError(
+                    f"Target output must use a .jpg or .jpeg name in {csv_path} row {row_index}: {image_name}"
+                )
+            if image_name in expected or image_name.casefold() in casefolded_names:
                 raise DataValidationError(f"Duplicate image_name in {csv_path}: {image_name}")
+            casefolded_names.add(image_name.casefold())
             expected[image_name] = ExpectedImage(
                 name=image_name,
                 width=_positive_int(row["width"], "width", csv_path, row_index),
@@ -83,12 +91,12 @@ def _read_expected_images(csv_path: Path) -> dict[str, ExpectedImage]:
 
 def _positive_int(value: str, column: str, csv_path: Path, row_index: int) -> int:
     try:
-        parsed = int(float(value))
+        numeric = float(value)
     except ValueError as exc:
         raise DataValidationError(f"Invalid integer for {column} in {csv_path} row {row_index}: {value}") from exc
-    if parsed <= 0:
-        raise DataValidationError(f"{column} must be positive in {csv_path} row {row_index}")
-    return parsed
+    if not numeric.is_integer() or numeric <= 0:
+        raise DataValidationError(f"{column} must be a positive integer in {csv_path} row {row_index}")
+    return int(numeric)
 
 
 def _validate_folder_submission(
@@ -103,11 +111,20 @@ def _validate_folder_submission(
         issues.append(SubmissionIssue(f"Submission path must be a directory or .zip: {submission_dir}"))
         return _result(expected, issues, image_count=0)
 
-    root_files = [path.name for path in submission_dir.iterdir() if path.is_file()]
-    for name in sorted(root_files):
-        issues.append(SubmissionIssue(f"Unexpected root file in submission folder: {name}"))
+    if _is_unsafe_link(submission_dir):
+        issues.append(SubmissionIssue(f"Submission directory must not be a symlink or junction: {submission_dir}"))
+        return _result(expected, issues, image_count=0)
 
-    actual_scenes = {path.name: path for path in submission_dir.iterdir() if path.is_dir()}
+    actual_scenes: dict[str, Path] = {}
+    for path in sorted(submission_dir.iterdir(), key=lambda candidate: candidate.name):
+        if _is_unsafe_link(path):
+            issues.append(SubmissionIssue(f"Submission entry must not be a symlink or junction: {path.name}"))
+        elif path.is_file():
+            issues.append(SubmissionIssue(f"Unexpected root file in submission folder: {path.name}"))
+        elif path.is_dir():
+            actual_scenes[path.name] = path
+        else:
+            issues.append(SubmissionIssue(f"Unsupported root entry in submission folder: {path.name}"))
     _validate_scene_names(expected, set(actual_scenes), issues)
 
     image_count = 0
@@ -122,11 +139,25 @@ def _validate_folder_scene(
     scene_dir: Path,
     issues: list[SubmissionIssue],
 ) -> int:
-    for child in sorted(scene_dir.iterdir()):
-        if child.is_dir():
-            issues.append(SubmissionIssue(f"Nested folders are not allowed inside scene output: {scene_name}/{child.name}"))
+    if _is_unsafe_link(scene_dir):
+        issues.append(SubmissionIssue(f"Scene output must not be a symlink or junction: {scene_name}"))
+        return 0
 
-    actual_files = {path.name: path for path in scene_dir.iterdir() if _is_submission_image(path)}
+    actual_files: dict[str, Path] = {}
+    for child in sorted(scene_dir.iterdir(), key=lambda candidate: candidate.name):
+        if _is_unsafe_link(child):
+            issues.append(
+                SubmissionIssue(f"Submission image must not be a symlink or junction: {scene_name}/{child.name}")
+            )
+        elif child.is_dir():
+            issues.append(
+                SubmissionIssue(f"Nested folders are not allowed inside scene output: {scene_name}/{child.name}")
+            )
+        elif child.is_file():
+            actual_files[child.name] = child
+        else:
+            issues.append(SubmissionIssue(f"Unsupported scene entry: {scene_name}/{child.name}"))
+    _validate_case_collisions(scene_name, set(actual_files), issues)
     _validate_image_names(scene_name, expected_images, set(actual_files), issues)
     for image_name in sorted(set(expected_images) & set(actual_files)):
         _validate_image_stream(
@@ -150,14 +181,29 @@ def _validate_zip_submission(
 
     try:
         with zipfile.ZipFile(zip_path) as archive:
-            members = [member for member in archive.namelist() if not member.endswith("/")]
-            unsafe = [name for name in members if Path(name).is_absolute() or ".." in Path(name).parts]
-            for name in unsafe:
-                issues.append(SubmissionIssue(f"Unsafe ZIP member path: {name}"))
+            infos = archive.infolist()
+            member_counts = Counter(info.filename for info in infos)
+            for name, count in sorted(member_counts.items()):
+                if count > 1:
+                    issues.append(SubmissionIssue(f"Duplicate ZIP member: {name}"))
 
-            actual_by_scene: dict[str, dict[str, str]] = {}
-            for name in members:
-                parts = Path(name).parts
+            actual_by_scene: dict[str, dict[str, zipfile.ZipInfo]] = {}
+            for info in infos:
+                name = info.filename
+                if info.is_dir():
+                    issues.append(SubmissionIssue(f"ZIP directory entries are not allowed: {name}"))
+                    continue
+                if info.flag_bits & 0x1:
+                    issues.append(SubmissionIssue(f"Encrypted ZIP member is not allowed: {name}"))
+                    continue
+                unix_mode = (info.external_attr >> 16) & 0xFFFF
+                if stat.S_ISLNK(unix_mode):
+                    issues.append(SubmissionIssue(f"Symlink ZIP member is not allowed: {name}"))
+                    continue
+                if not _is_safe_zip_member(name):
+                    issues.append(SubmissionIssue(f"Unsafe ZIP member path: {name}"))
+                    continue
+                parts = PurePosixPath(name).parts
                 if len(parts) != 2:
                     issues.append(SubmissionIssue(f"ZIP member must be exactly scene/image, got: {name}"))
                     continue
@@ -165,12 +211,13 @@ def _validate_zip_submission(
                 if Path(image_name).suffix.lower() not in SUBMISSION_IMAGE_SUFFIXES:
                     issues.append(SubmissionIssue(f"Unsupported image suffix in ZIP member: {name}"))
                     continue
-                actual_by_scene.setdefault(scene_name, {})[image_name] = name
+                actual_by_scene.setdefault(scene_name, {}).setdefault(image_name, info)
 
             _validate_scene_names(expected, set(actual_by_scene), issues)
             image_count = sum(len(images) for images in actual_by_scene.values())
             for scene_name in sorted(set(expected) & set(actual_by_scene)):
                 actual_images = actual_by_scene[scene_name]
+                _validate_case_collisions(scene_name, set(actual_images), issues)
                 _validate_image_names(scene_name, expected[scene_name], set(actual_images), issues)
                 for image_name in sorted(set(expected[scene_name]) & set(actual_images)):
                     _validate_image_stream(
@@ -180,7 +227,7 @@ def _validate_zip_submission(
                         opener=lambda member=actual_images[image_name]: archive.open(member),
                         issues=issues,
                     )
-    except zipfile.BadZipFile:
+    except (OSError, zipfile.BadZipFile):
         issues.append(SubmissionIssue(f"Submission is not a readable ZIP file: {zip_path}"))
         image_count = 0
     return _result(expected, issues, image_count=image_count)
@@ -211,6 +258,18 @@ def _validate_image_names(
         issues.append(SubmissionIssue(f"Extra output image: {scene_name}/{image_name}"))
 
 
+def _validate_case_collisions(scene_name: str, names: set[str], issues: list[SubmissionIssue]) -> None:
+    seen: dict[str, str] = {}
+    for name in sorted(names):
+        folded = name.casefold()
+        if folded in seen:
+            issues.append(
+                SubmissionIssue(f"Output image names collide by case in {scene_name}: {seen[folded]}, {name}")
+            )
+        else:
+            seen[folded] = name
+
+
 def _validate_image_stream(
     scene_name: str,
     image_name: str,
@@ -221,9 +280,19 @@ def _validate_image_stream(
     try:
         with opener() as handle:
             data = handle.read()
+    except (EOFError, OSError, RuntimeError, zipfile.BadZipFile) as exc:
+        issues.append(SubmissionIssue(f"CRC/read failure for {scene_name}/{image_name}: {exc}"))
+        return
+    try:
         with Image.open(BytesIO(data)) as image:
             image.verify()
         with Image.open(BytesIO(data)) as image:
+            if image.format != "JPEG":
+                issues.append(
+                    SubmissionIssue(
+                        f"Output image must contain JPEG data: {scene_name}/{image_name} (got {image.format})"
+                    )
+                )
             if image.size != (expected.width, expected.height):
                 issues.append(
                     SubmissionIssue(
@@ -232,13 +301,42 @@ def _validate_image_stream(
                     )
                 )
             if image.mode != "RGB":
-                issues.append(SubmissionIssue(f"Image mode mismatch for {scene_name}/{image_name}: got {image.mode}, expected RGB"))
+                issues.append(
+                    SubmissionIssue(
+                        f"Image mode mismatch for {scene_name}/{image_name}: got {image.mode}, expected RGB"
+                    )
+                )
     except (OSError, UnidentifiedImageError) as exc:
         issues.append(SubmissionIssue(f"Output image is not readable: {scene_name}/{image_name} ({exc})"))
 
 
-def _is_submission_image(path: Path) -> bool:
-    return path.is_file() and path.suffix.lower() in SUBMISSION_IMAGE_SUFFIXES
+def _validate_safe_basename(name: str, csv_path: Path, row_index: int) -> None:
+    if (
+        not name
+        or name != name.strip()
+        or "\x00" in name
+        or "/" in name
+        or "\\" in name
+        or name in {".", ".."}
+        or PurePosixPath(name).name != name
+        or PureWindowsPath(name).name != name
+        or PureWindowsPath(name).drive
+    ):
+        raise DataValidationError(f"Unsafe image_name in {csv_path} row {row_index}: {name!r}")
+
+
+def _is_safe_zip_member(name: str) -> bool:
+    if not name or "\x00" in name or "\\" in name or name.startswith("/"):
+        return False
+    path = PurePosixPath(name)
+    if path.as_posix() != name or path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        return False
+    return all(PureWindowsPath(part).drive == "" for part in path.parts)
+
+
+def _is_unsafe_link(path: Path) -> bool:
+    is_junction = getattr(path, "is_junction", None)
+    return path.is_symlink() or (callable(is_junction) and is_junction())
 
 
 def _result(
@@ -256,7 +354,12 @@ def _result(
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Validate a VAI/BTC submission folder or ZIP against test_poses.csv.")
-    parser.add_argument("--data-root", type=Path, required=True, help="VAI scene root or dataset root containing scene folders.")
+    parser.add_argument(
+        "--data-root",
+        type=Path,
+        required=True,
+        help="VAI scene root or dataset root containing scene folders.",
+    )
     parser.add_argument("--submission", type=Path, required=True, help="Submission folder or ZIP to validate.")
     return parser
 
