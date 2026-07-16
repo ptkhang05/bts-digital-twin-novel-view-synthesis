@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.cache/
 .venv/
 venv/
 build/
@@ -11,10 +12,22 @@ dist/
 outputs/
 data/
 VAI_NVS_DATA/
+VAI_NVS_DATA_ROUND2/
+VAI_NVS_DATA_ROUND2.zip
+Yeu_cau_BTC_BTS_markdown/
 processed/
 submission/
 submission*.zip
 renders/
+tmp/
 *.pdf
 .env
 .env.*
+*.pem
+*.key
+.agents/
+
+# This project supports Windows workstations and Linux GPU workers only.
+__MACOSX/
+.DS_Store
+._*

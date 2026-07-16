@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import struct
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO, Iterable
-
-import numpy as np
+from typing import BinaryIO
 
 from bts_nvs.camera import opencv_w2c_to_nerfstudio_c2w
 from bts_nvs.exceptions import DataValidationError
@@ -110,7 +109,9 @@ def _read_cameras_text(path: Path) -> dict[int, ColmapCamera]:
         if expected is None:
             raise DataValidationError(f"Unsupported COLMAP camera model: {model}")
         if len(params) != expected[1]:
-            raise DataValidationError(f"Camera {camera_id} model {model} expects {expected[1]} params, got {len(params)}")
+            raise DataValidationError(
+                f"Camera {camera_id} model {model} expects {expected[1]} params, got {len(params)}"
+            )
         cameras[camera_id] = ColmapCamera(camera_id, model, width, height, params)
     if not cameras:
         raise DataValidationError(f"No cameras found in {path}")

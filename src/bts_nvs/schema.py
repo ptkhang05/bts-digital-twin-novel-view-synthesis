@@ -9,6 +9,7 @@ from PIL import Image
 
 from bts_nvs.camera import validate_transform_matrix
 from bts_nvs.exceptions import DataValidationError
+from bts_nvs.path_safety import require_path_within
 
 INTRINSIC_KEYS = ("fl_x", "fl_y", "cx", "cy", "w", "h")
 DISTORTION_KEYS = ("k1", "k2", "k3", "k4", "p1", "p2", "distortion_params")
@@ -64,16 +65,17 @@ def frame_intrinsics(frame: dict[str, Any], meta: dict[str, Any]) -> dict[str, A
 
 def resolve_frame_image(scene: Path, file_path: str) -> Path:
     candidate = Path(file_path)
-    if candidate.is_absolute() and candidate.exists():
-        return candidate
+    if candidate.is_absolute() or ".." in candidate.parts:
+        raise DataValidationError(f"Frame image must stay inside the scene directory: {file_path}")
     candidates = [
         scene / candidate,
         scene / "images" / candidate.name,
         scene / "train" / "images" / candidate.name,
     ]
     for path in candidates:
-        if path.exists():
-            return path
+        safe_path = require_path_within(scene, path, label="Frame image")
+        if safe_path.is_file():
+            return safe_path
     raise DataValidationError(f"Frame image is missing: {file_path}")
 
 

@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "source_root": "Yeu_cau_BTC_BTS_markdown",
+  "recorded_on": "2026-07-16",
+  "digest_algorithm": "sha256(path\\0size\\0sha256\\n), sorted by POSIX path",
+  "overall_sha256": "fa5f4d5086e8e7d91fde4b69e540bb20817b8b083033d3b42bcf67d727accdbc",
+  "file_count": 2,
+  "total_bytes": 12241,
+  "files": [
+    {
+      "path": "Yêu cầu BTC BTS 1.md",
+      "size": 8989,
+      "sha256": "2b957720c461e20663d45c0586e96ea4b60f887296cbed11d3e9987b62213369"
+    },
+    {
+      "path": "Yêu cầu BTC BTS 2.md",
+      "size": 3252,
+      "sha256": "a51954e1738259c6d89810d79dc80398c7919731471ae318181448fea1cdc0e3"
+    }
+  ]
+}

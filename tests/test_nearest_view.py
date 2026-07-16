@@ -1,8 +1,14 @@
+import os
 from pathlib import Path
 
+import numpy as np
+import pytest
 from PIL import Image
 
-from bts_nvs.nearest_view import render_nearest_dataset
+import bts_nvs.nearest_view as nearest_view_module
+import bts_nvs.path_safety as path_safety_module
+from bts_nvs.exceptions import DataValidationError
+from bts_nvs.nearest_view import _read_target_poses, render_nearest_dataset
 
 
 def _write_nearest_scene(scene: Path, test_pose_name: str = "test_poses.csv") -> None:
@@ -96,7 +102,7 @@ def _write_temporal_gap_scene(scene: Path) -> None:
 
 
 def test_render_nearest_dataset_writes_exact_target_name_by_default(tmp_path: Path):
-    root = tmp_path / "private_set1"
+    root = tmp_path / "VAI_NVS_DATA_ROUND2"
     _write_nearest_scene(root / "scene_a")
 
     result = render_nearest_dataset(root=root, output=tmp_path / "submission")
@@ -111,18 +117,16 @@ def test_render_nearest_dataset_writes_exact_target_name_by_default(tmp_path: Pa
         assert image.size == (2, 2)
 
 
-def test_render_nearest_dataset_accepts_singular_test_pose_csv_name(tmp_path: Path):
-    root = tmp_path / "private_set1"
+def test_render_nearest_dataset_rejects_noncanonical_singular_test_pose_csv_name(tmp_path: Path):
+    root = tmp_path / "VAI_NVS_DATA_ROUND2"
     _write_nearest_scene(root / "scene_a", test_pose_name="test_pose.csv")
 
-    result = render_nearest_dataset(root=root, output=tmp_path / "submission")
-
-    assert result.image_count == 1
-    assert (tmp_path / "submission" / "scene_a" / "target.JPG").exists()
+    with pytest.raises(DataValidationError, match="test/test_poses.csv"):
+        render_nearest_dataset(root=root, output=tmp_path / "submission")
 
 
 def test_render_nearest_dataset_can_force_png_stem_names(tmp_path: Path):
-    root = tmp_path / "private_set1"
+    root = tmp_path / "VAI_NVS_DATA_ROUND2"
     _write_nearest_scene(root / "scene_a")
 
     render_nearest_dataset(root=root, output=tmp_path / "submission", name_policy="png", image_format="png")
@@ -132,11 +136,112 @@ def test_render_nearest_dataset_can_force_png_stem_names(tmp_path: Path):
     with Image.open(output) as image:
         assert image.format == "PNG"
         assert image.size == (2, 2)
-        assert image.getpixel((0, 0)) == (0, 0, 255)
+        assert image.getpixel((0, 0)) == (255, 0, 0)
+
+
+def test_render_nearest_dataset_atomically_replaces_previous_output(tmp_path: Path):
+    root = tmp_path / "VAI_NVS_DATA_ROUND2"
+    _write_nearest_scene(root / "scene_a")
+    output = tmp_path / "submission"
+    output.mkdir()
+    (output / "stale.txt").write_text("old", encoding="utf-8")
+
+    render_nearest_dataset(root=root, output=output)
+
+    assert not (output / "stale.txt").exists()
+    assert (output / "scene_a" / "target.JPG").is_file()
+
+
+def test_render_nearest_dataset_failure_preserves_entire_previous_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    root = tmp_path / "VAI_NVS_DATA_ROUND2"
+    _write_nearest_scene(root / "scene_a")
+    _write_nearest_scene(root / "scene_b")
+    output = tmp_path / "submission"
+    output.mkdir()
+    sentinel = output / "previous.txt"
+    sentinel.write_text("last-known-good", encoding="utf-8")
+    real_writer = nearest_view_module._write_selected_prediction
+    calls = 0
+
+    def fail_on_second_prediction(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("simulated nearest-view failure")
+        return real_writer(*args, **kwargs)
+
+    monkeypatch.setattr(nearest_view_module, "_write_selected_prediction", fail_on_second_prediction)
+
+    with pytest.raises(RuntimeError, match="simulated nearest-view failure"):
+        render_nearest_dataset(root=root, output=output)
+
+    assert [path.relative_to(output).as_posix() for path in output.rglob("*")] == ["previous.txt"]
+    assert sentinel.read_text(encoding="utf-8") == "last-known-good"
+    assert not list(tmp_path.glob(".submission.*"))
+
+
+def test_render_nearest_dataset_promotion_failure_restores_previous_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    root = tmp_path / "VAI_NVS_DATA_ROUND2"
+    _write_nearest_scene(root / "scene_a")
+    output = tmp_path / "submission"
+    output.mkdir()
+    sentinel = output / "previous.txt"
+    sentinel.write_text("last-known-good", encoding="utf-8")
+    real_replace = os.replace
+    failed = False
+
+    def fail_staging_promotion(source, destination):
+        nonlocal failed
+        source_path = Path(source)
+        destination_path = Path(destination)
+        if not failed and destination_path == output and source_path.name.startswith(".submission."):
+            failed = True
+            raise OSError("simulated atomic replace failure")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(path_safety_module.os, "replace", fail_staging_promotion)
+
+    with pytest.raises(OSError, match="simulated atomic replace failure"):
+        render_nearest_dataset(root=root, output=output)
+
+    assert sentinel.read_text(encoding="utf-8") == "last-known-good"
+    assert [path.relative_to(output).as_posix() for path in output.rglob("*")] == ["previous.txt"]
+    assert not list(tmp_path.glob(".submission.*"))
+
+
+def test_render_nearest_dataset_defaults_to_jpeg_quality_95(tmp_path: Path):
+    root = tmp_path / "VAI_NVS_DATA_ROUND2"
+    _write_nearest_scene(root / "scene_a")
+
+    render_nearest_dataset(root=root, output=tmp_path / "default")
+    render_nearest_dataset(root=root, output=tmp_path / "explicit", jpeg_quality=95)
+
+    default_jpeg = tmp_path / "default" / "scene_a" / "target.JPG"
+    explicit_jpeg = tmp_path / "explicit" / "scene_a" / "target.JPG"
+    assert default_jpeg.read_bytes() == explicit_jpeg.read_bytes()
+
+
+def test_read_target_poses_converts_colmap_world_to_camera_translation_to_camera_center(tmp_path: Path):
+    poses = tmp_path / "test_poses.csv"
+    poses.write_text(
+        "image_name,qw,qx,qy,qz,tx,ty,tz,fx,fy,cx,cy,width,height\n"
+        "target.JPG,0,0,0,1,1,2,3,10,11,8,6,16,12\n",
+        encoding="utf-8",
+    )
+
+    target = _read_target_poses(poses)[0]
+
+    np.testing.assert_allclose(target.camera_center, np.asarray([1.0, 2.0, -3.0]))
 
 
 def test_render_nearest_dataset_temporal_blend_uses_bracketing_frame_indices(tmp_path: Path):
-    root = tmp_path / "private_set1"
+    root = tmp_path / "VAI_NVS_DATA_ROUND2"
     _write_temporal_scene(root / "scene_a")
 
     render_nearest_dataset(root=root, output=tmp_path / "submission", selection_mode="temporal-blend")
@@ -153,7 +258,7 @@ def test_render_nearest_dataset_temporal_blend_uses_bracketing_frame_indices(tmp
 
 
 def test_render_nearest_dataset_temporal_blend_defaults_to_linear_frame_weight(tmp_path: Path):
-    root = tmp_path / "private_set1"
+    root = tmp_path / "VAI_NVS_DATA_ROUND2"
     _write_temporal_gap_scene(root / "scene_a")
 
     render_nearest_dataset(root=root, output=tmp_path / "submission", selection_mode="temporal-blend")
@@ -167,7 +272,7 @@ def test_render_nearest_dataset_temporal_blend_defaults_to_linear_frame_weight(t
 
 
 def test_render_nearest_dataset_temporal_blend_can_use_midpoint_weight(tmp_path: Path):
-    root = tmp_path / "private_set1"
+    root = tmp_path / "VAI_NVS_DATA_ROUND2"
     _write_temporal_gap_scene(root / "scene_a")
 
     render_nearest_dataset(

@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import csv
 import re
+import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,7 +14,8 @@ from PIL import Image
 from bts_nvs.camera import qvec_to_rotmat
 from bts_nvs.colmap import read_colmap_model
 from bts_nvs.exceptions import DataValidationError
-from bts_nvs.vai import TEST_POSE_COLUMNS, discover_vai_phase1_scenes, find_test_poses_csv, train_image_names
+from bts_nvs.path_safety import assert_paths_do_not_overlap, assert_tree_has_no_links, promote_directory
+from bts_nvs.vai import TEST_POSE_COLUMNS, discover_vai_scenes, find_test_poses_csv, train_image_names
 
 JPEG_SUFFIXES = {".jpg", ".jpeg"}
 IMAGE_FORMATS = {"auto", "jpeg", "png"}
@@ -50,26 +53,47 @@ def render_nearest_dataset(
     output: Path | str,
     name_policy: str = "exact",
     image_format: str = "auto",
-    jpeg_quality: int = 92,
+    jpeg_quality: int = 95,
     selection_mode: str = "temporal-blend",
     blend_weight_policy: str = "linear",
 ) -> NearestViewSubmission:
     root_path = Path(root)
     output_path = Path(output)
-    scene_count = 0
+    _validate_output_options(
+        name_policy=name_policy,
+        image_format=image_format,
+        jpeg_quality=jpeg_quality,
+        selection_mode=selection_mode,
+        blend_weight_policy=blend_weight_policy,
+    )
+    assert_paths_do_not_overlap(
+        root_path,
+        output_path,
+        first_label="Raw dataset root",
+        second_label="Nearest-view output directory",
+    )
+    assert_tree_has_no_links(root_path, "Raw dataset root")
+    scenes = discover_vai_scenes(root_path)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{output_path.name}.", dir=output_path.parent))
     image_count = 0
-    for scene in discover_vai_phase1_scenes(root_path):
-        image_count += render_nearest_scene(
-            scene,
-            output_path / scene.name,
-            name_policy=name_policy,
-            image_format=image_format,
-            jpeg_quality=jpeg_quality,
-            selection_mode=selection_mode,
-            blend_weight_policy=blend_weight_policy,
-        )
-        scene_count += 1
-    return NearestViewSubmission(output_path, scene_count=scene_count, image_count=image_count)
+    try:
+        for scene in scenes:
+            image_count += _render_nearest_scene_into(
+                scene,
+                staging / scene.name,
+                name_policy=name_policy,
+                image_format=image_format,
+                jpeg_quality=jpeg_quality,
+                selection_mode=selection_mode,
+                blend_weight_policy=blend_weight_policy,
+            )
+        promote_directory(staging, output_path, label="Nearest-view dataset")
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
+    return NearestViewSubmission(output_path, scene_count=len(scenes), image_count=image_count)
 
 
 def render_nearest_scene(
@@ -77,7 +101,7 @@ def render_nearest_scene(
     output: Path | str,
     name_policy: str = "exact",
     image_format: str = "auto",
-    jpeg_quality: int = 92,
+    jpeg_quality: int = 95,
     selection_mode: str = "temporal-blend",
     blend_weight_policy: str = "linear",
 ) -> int:
@@ -90,10 +114,43 @@ def render_nearest_scene(
     )
     scene_path = Path(scene)
     output_path = Path(output)
+    assert_paths_do_not_overlap(
+        scene_path,
+        output_path,
+        first_label="Raw scene directory",
+        second_label="Nearest-view output directory",
+    )
+    assert_tree_has_no_links(scene_path, "Raw scene directory")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{output_path.name}.", dir=output_path.parent))
+    try:
+        count = _render_nearest_scene_into(
+            scene_path,
+            staging,
+            name_policy=name_policy,
+            image_format=image_format,
+            jpeg_quality=jpeg_quality,
+            selection_mode=selection_mode,
+            blend_weight_policy=blend_weight_policy,
+        )
+        promote_directory(staging, output_path, label="Nearest-view scene")
+        return count
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
+
+
+def _render_nearest_scene_into(
+    scene_path: Path,
+    output_path: Path,
+    *,
+    name_policy: str,
+    image_format: str,
+    jpeg_quality: int,
+    selection_mode: str,
+    blend_weight_policy: str,
+) -> int:
     output_path.mkdir(parents=True, exist_ok=True)
-    for stale_image in output_path.iterdir():
-        if stale_image.is_file() and stale_image.suffix.lower() in {".png", ".jpg", ".jpeg"}:
-            stale_image.unlink()
 
     train_views = _read_train_views(scene_path)
     targets = _read_target_poses(find_test_poses_csv(scene_path))
@@ -154,17 +211,19 @@ def _read_target_poses(path: Path) -> list[TargetPose]:
                 raise DataValidationError(f"Missing image_name in test_poses.csv row {row_index}")
             width = _positive_int(row["width"], "width", row_index)
             height = _positive_int(row["height"], "height", row_index)
+            qvec = np.asarray(
+                [_float(row[key], key, row_index) for key in ("qw", "qx", "qy", "qz")],
+                dtype=float,
+            )
+            tvec = np.asarray(
+                [_float(row[key], key, row_index) for key in ("tx", "ty", "tz")],
+                dtype=float,
+            )
+            rotation = qvec_to_rotmat(qvec)
             targets.append(
                 TargetPose(
                     image_name=image_name,
-                    camera_center=np.asarray(
-                        [
-                            _float(row["tx"], "tx", row_index),
-                            _float(row["ty"], "ty", row_index),
-                            _float(row["tz"], "tz", row_index),
-                        ],
-                        dtype=float,
-                    ),
+                    camera_center=-rotation.T @ tvec,
                     frame_index=_extract_frame_index(image_name),
                     width=width,
                     height=height,
@@ -235,8 +294,16 @@ def _bracketing_train_views(
         return None, None
     low_candidates = [view for view in indexed_views if (view.frame_index or 0) <= target.frame_index]
     high_candidates = [view for view in indexed_views if (view.frame_index or 0) >= target.frame_index]
-    low_view = max(low_candidates, key=lambda view: (view.frame_index or 0, view.image_path.name)) if low_candidates else None
-    high_view = min(high_candidates, key=lambda view: (view.frame_index or 0, view.image_path.name)) if high_candidates else None
+    low_view = (
+        max(low_candidates, key=lambda view: (view.frame_index or 0, view.image_path.name))
+        if low_candidates
+        else None
+    )
+    high_view = (
+        min(high_candidates, key=lambda view: (view.frame_index or 0, view.image_path.name))
+        if high_candidates
+        else None
+    )
     if low_view is None:
         low_view = high_view
     if high_view is None:
@@ -380,9 +447,9 @@ def _positive_int(value: str, key: str, row_index: int) -> int:
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Create a low-cost nearest-training-view image submission for VAI phase1 scenes."
+        description="Create a low-cost nearest-training-view image submission for VAI scenes."
     )
-    parser.add_argument("--root", type=Path, required=True, help="Dataset root, e.g. VAI_NVS_DATA/phase1/private_set1.")
+    parser.add_argument("--root", type=Path, required=True, help="Dataset root, e.g. VAI_NVS_DATA_ROUND2.")
     parser.add_argument("--out", type=Path, required=True, help="Output directory containing scene_id/* image files.")
     parser.add_argument(
         "--name-policy",
@@ -396,7 +463,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default="auto",
         help="Output encoding. auto writes JPEG for .jpg/.jpeg names and PNG otherwise.",
     )
-    parser.add_argument("--jpeg-quality", type=int, default=92, help="JPEG quality for JPEG outputs.")
+    parser.add_argument("--jpeg-quality", type=int, default=95, help="JPEG quality for JPEG outputs.")
     parser.add_argument(
         "--selection-mode",
         choices=tuple(sorted(SELECTION_MODES)),

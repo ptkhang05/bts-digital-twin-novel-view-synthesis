@@ -8,7 +8,6 @@ from pathlib import Path
 
 from bts_nvs.exceptions import ExternalCommandError
 
-
 PRESETS = {
     "fast": "splatfacto",
     "quality": "splatfacto-big",
@@ -28,7 +27,7 @@ def build_train_command(
     output_dir: Path | str | None = None,
     experiment_name: str | None = None,
     extra_args: list[str] | None = None,
-    disable_pose_normalization: bool = False,
+    debug_allow_pose_normalization: bool = False,
 ) -> list[str]:
     if preset not in PRESETS:
         raise ValueError(f"Unknown preset '{preset}'. Expected one of: {', '.join(PRESETS)}")
@@ -40,7 +39,7 @@ def build_train_command(
         command.extend(["--experiment-name", experiment_name])
     if extra_args:
         command.extend(extra_args)
-    if disable_pose_normalization:
+    if not debug_allow_pose_normalization:
         command.extend(
             [
                 "nerfstudio-data",
@@ -152,10 +151,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--dry-run", action="store_true", help="Print the command without running it.")
     parser.add_argument(
-        "--disable-pose-normalization",
+        "--debug-allow-pose-normalization",
         action="store_true",
-        help="Use nerfstudio-data with orientation/centering/auto-scale disabled. "
-        "Use this when target cameras are already in the same COLMAP coordinate frame as training poses.",
+        help="Debug override that allows Nerfstudio to reorient, recenter, and rescale poses. "
+        "Disabled by default so VAI target cameras remain in the training COLMAP coordinate frame.",
     )
     parser.add_argument("extra_args", nargs=argparse.REMAINDER, help="Extra args passed after -- to ns-train.")
     return parser
@@ -173,7 +172,7 @@ def main() -> None:
         output_dir=args.output_dir,
         experiment_name=args.experiment_name,
         extra_args=extra_args,
-        disable_pose_normalization=args.disable_pose_normalization,
+        debug_allow_pose_normalization=args.debug_allow_pose_normalization,
     )
     if args.dry_run:
         print(" ".join(command))

@@ -5,7 +5,15 @@ import pytest
 from PIL import Image
 
 from bts_nvs.exceptions import DataValidationError
-from bts_nvs.render import build_camera_path, build_render_command, rendered_image_directory, _rename_rendered_images
+from bts_nvs.render import (
+    _rename_rendered_images,
+    build_camera_path,
+    build_exact_render_command,
+    build_render_command,
+    render_targets,
+    rendered_image_directory,
+    targets_have_lens_distortion,
+)
 
 
 def test_build_camera_path_converts_target_transforms_to_nerfstudio_camera_path(tmp_path: Path):
@@ -70,34 +78,6 @@ def test_build_camera_path_preserves_exact_non_png_target_names(tmp_path: Path):
     assert names == ["HCM0249_0042_V.JPG"]
 
 
-def test_build_camera_path_strict_contest_rejects_too_few_targets(tmp_path: Path):
-    targets = {
-        "camera_model": "OPENCV",
-        "fl_x": 10.0,
-        "fl_y": 10.0,
-        "cx": 8.0,
-        "cy": 6.0,
-        "w": 16,
-        "h": 12,
-        "frames": [
-            {
-                "file_path": "target_000.png",
-                "transform_matrix": [
-                    [1, 0, 0, 0],
-                    [0, 1, 0, 0],
-                    [0, 0, 1, 0],
-                    [0, 0, 0, 1],
-                ],
-            }
-        ],
-    }
-    target_file = tmp_path / "target_cameras.json"
-    target_file.write_text(json.dumps(targets), encoding="utf-8")
-
-    with pytest.raises(DataValidationError, match="20-70"):
-        build_camera_path(target_file, strict_contest=True)
-
-
 def test_build_render_command_requests_lossless_image_sequence(tmp_path: Path):
     command = build_render_command(
         checkpoint=tmp_path / "config.yml",
@@ -110,6 +90,164 @@ def test_build_render_command_requests_lossless_image_sequence(tmp_path: Path):
     assert command[command.index("--output-format") + 1] == "images"
     assert "--image-format" in command
     assert command[command.index("--image-format") + 1] == "png"
+
+
+def test_build_exact_render_command_uses_current_nerfstudio_python(tmp_path: Path):
+    command = build_exact_render_command(
+        checkpoint=tmp_path / "config.yml",
+        targets=tmp_path / "target_cameras.json",
+        output=tmp_path / "submission",
+    )
+
+    assert command[1:3] == ["-m", "bts_nvs.render_exact"]
+    assert command[command.index("--checkpoint") + 1] == str(tmp_path / "config.yml")
+    assert command[command.index("--targets") + 1] == str(tmp_path / "target_cameras.json")
+
+
+def test_render_targets_auto_distortion_routes_nonzero_model_to_exact_renderer(tmp_path: Path):
+    targets = {
+        "camera_model": "OPENCV",
+        "fl_x": 10.0,
+        "fl_y": 10.0,
+        "cx": 8.0,
+        "cy": 6.0,
+        "w": 16,
+        "h": 12,
+        "k1": -0.1,
+        "frames": [
+            {
+                "file_path": "target.JPG",
+                "transform_matrix": [
+                    [1, 0, 0, 0],
+                    [0, 1, 0, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1],
+                ],
+            }
+        ],
+    }
+    target_file = tmp_path / "target_cameras.json"
+    target_file.write_text(json.dumps(targets), encoding="utf-8")
+
+    command = render_targets(
+        checkpoint=tmp_path / "config.yml",
+        targets=target_file,
+        output=tmp_path / "submission",
+        dry_run=True,
+    )
+
+    assert command[1:3] == ["-m", "bts_nvs.render_exact"]
+
+
+def test_targets_have_lens_distortion_is_false_for_pinhole_targets(tmp_path: Path):
+    targets = {
+        "camera_model": "SIMPLE_PINHOLE",
+        "fl_x": 10.0,
+        "fl_y": 10.0,
+        "cx": 8.0,
+        "cy": 6.0,
+        "w": 16,
+        "h": 12,
+        "frames": [
+            {
+                "file_path": "target.jpg",
+                "transform_matrix": [
+                    [1, 0, 0, 0],
+                    [0, 1, 0, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1],
+                ],
+            }
+        ],
+    }
+    target_file = tmp_path / "target_cameras.json"
+    target_file.write_text(json.dumps(targets), encoding="utf-8")
+
+    assert targets_have_lens_distortion(target_file) is False
+    command = render_targets(
+        checkpoint=tmp_path / "config.yml",
+        targets=target_file,
+        output=tmp_path / "submission",
+        dry_run=True,
+    )
+    assert command[:2] == ["ns-render", "camera-path"]
+
+
+def test_render_targets_failure_preserves_previous_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    targets = {
+        "camera_model": "SIMPLE_PINHOLE",
+        "fl_x": 10.0,
+        "fl_y": 10.0,
+        "cx": 8.0,
+        "cy": 6.0,
+        "w": 16,
+        "h": 12,
+        "frames": [
+            {
+                "file_path": "target.jpg",
+                "transform_matrix": [
+                    [1, 0, 0, 0],
+                    [0, 1, 0, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1],
+                ],
+            }
+        ],
+    }
+    target_file = tmp_path / "target_cameras.json"
+    target_file.write_text(json.dumps(targets), encoding="utf-8")
+    output = tmp_path / "candidate"
+    output.mkdir()
+    previous = output / "target.jpg"
+    previous.write_bytes(b"previous-good-render")
+
+    def fail_command(_command: list[str]) -> None:
+        raise RuntimeError("simulated renderer failure")
+
+    monkeypatch.setattr("bts_nvs.render.run_external_command", fail_command)
+
+    with pytest.raises(RuntimeError, match="simulated renderer failure"):
+        render_targets(tmp_path / "config.yml", target_file, output)
+
+    assert previous.read_bytes() == b"previous-good-render"
+    assert not list(tmp_path.glob(".candidate.*"))
+
+
+def test_render_targets_rejects_output_overlapping_checkpoint_or_targets(tmp_path: Path):
+    targets = {
+        "camera_model": "SIMPLE_PINHOLE",
+        "fl_x": 10.0,
+        "fl_y": 10.0,
+        "cx": 8.0,
+        "cy": 6.0,
+        "w": 16,
+        "h": 12,
+        "frames": [
+            {
+                "file_path": "target.jpg",
+                "transform_matrix": [
+                    [1, 0, 0, 0],
+                    [0, 1, 0, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1],
+                ],
+            }
+        ],
+    }
+    protected = tmp_path / "protected"
+    protected.mkdir()
+    checkpoint = protected / "config.yml"
+    checkpoint.write_text("config", encoding="utf-8")
+    target_file = protected / "target_cameras.json"
+    target_file.write_text(json.dumps(targets), encoding="utf-8")
+
+    with pytest.raises(DataValidationError, match="overlap"):
+        render_targets(
+            checkpoint=checkpoint,
+            targets=target_file,
+            output=protected,
+            dry_run=True,
+        )
 
 
 def test_rendered_image_directory_matches_nerfstudio_image_output_rule(tmp_path: Path):

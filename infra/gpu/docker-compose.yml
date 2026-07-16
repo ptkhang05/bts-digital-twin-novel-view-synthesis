@@ -1,0 +1,19 @@
+services:
+  nvs:
+    build:
+      context: ../..
+      dockerfile: infra/gpu/Dockerfile
+    image: bts-nvs-gpu:nerfstudio-1.1.5
+    working_dir: /workspace
+    ipc: host
+    gpus: all
+    stdin_open: true
+    tty: true
+    environment:
+      PYTHONPATH: /workspace/src
+    volumes:
+      - ../../src:/workspace/src:ro
+      - ../../manifests:/workspace/manifests:ro
+      - ../../VAI_NVS_DATA_ROUND2:/workspace/VAI_NVS_DATA_ROUND2:ro
+      - ../../processed:/workspace/processed
+      - ../../outputs:/workspace/outputs
