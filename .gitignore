@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.cache/
 .venv/
 venv/
 build/
@@ -24,6 +25,7 @@ tmp/
 .env.*
 *.pem
 *.key
+.agents/
 
 # This project supports Windows workstations and Linux GPU workers only.
 __MACOSX/
