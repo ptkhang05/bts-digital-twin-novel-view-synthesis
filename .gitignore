@@ -11,10 +11,21 @@ dist/
 outputs/
 data/
 VAI_NVS_DATA/
+VAI_NVS_DATA_ROUND2/
+VAI_NVS_DATA_ROUND2.zip
+Yeu_cau_BTC_BTS_markdown/
 processed/
 submission/
 submission*.zip
 renders/
+tmp/
 *.pdf
 .env
 .env.*
+*.pem
+*.key
+
+# This project supports Windows workstations and Linux GPU workers only.
+__MACOSX/
+.DS_Store
+._*
