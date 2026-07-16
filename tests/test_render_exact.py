@@ -6,7 +6,7 @@ import pytest
 
 from bts_nvs.distortion import redistort_image
 from bts_nvs.exceptions import DataValidationError
-from bts_nvs.render_exact import load_exact_targets
+from bts_nvs.render_exact import _promote_render_directory, load_exact_targets
 
 
 def test_load_exact_targets_uses_rectified_intrinsics_and_exact_names(tmp_path: Path):
@@ -72,3 +72,18 @@ def test_load_exact_targets_rejects_fisheye_model(tmp_path: Path):
 
     with pytest.raises(DataValidationError, match="perspective"):
         load_exact_targets(path)
+
+
+def test_promote_render_directory_replaces_output_only_after_staging_is_complete(tmp_path: Path):
+    output = tmp_path / "candidate"
+    output.mkdir()
+    (output / "target.jpg").write_bytes(b"old")
+    staging = tmp_path / ".candidate.staging"
+    staging.mkdir()
+    (staging / "target.jpg").write_bytes(b"new")
+
+    _promote_render_directory(staging, output)
+
+    assert (output / "target.jpg").read_bytes() == b"new"
+    assert not staging.exists()
+    assert not (tmp_path / ".candidate.backup").exists()

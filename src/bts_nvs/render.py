@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 from PIL import Image
@@ -16,6 +18,7 @@ from bts_nvs.train import run_external_command
 JPEG_SUFFIXES = {".jpg", ".jpeg"}
 PNG_SUFFIXES = {".png"}
 SUBMISSION_IMAGE_SUFFIXES = JPEG_SUFFIXES | PNG_SUFFIXES
+DISTORTION_MODES = ("auto", "on", "off")
 
 
 def build_camera_path(
@@ -97,6 +100,22 @@ def build_exact_render_command(
     ]
 
 
+def targets_have_lens_distortion(targets_path: Path | str) -> bool:
+    """Return whether any target camera has a non-zero distortion coefficient."""
+    targets = validate_transforms(load_json(Path(targets_path)))
+    for frame in targets["frames"]:
+        intrinsics = frame_intrinsics(frame, targets)
+        packed = intrinsics.get("distortion_params")
+        if packed is not None:
+            if not isinstance(packed, list) or len(packed) != 6:
+                raise DataValidationError("distortion_params must contain [k1, k2, k3, k4, p1, p2]")
+            if any(abs(float(value)) > 0.0 for value in packed):
+                return True
+        if any(abs(float(intrinsics.get(key, 0.0))) > 0.0 for key in ("k1", "k2", "k3", "k4", "p1", "p2")):
+            return True
+    return False
+
+
 def render_targets(
     checkpoint: Path | str,
     targets: Path | str,
@@ -104,30 +123,48 @@ def render_targets(
     dry_run: bool = False,
     strict_contest: bool = False,
     contest_phase: str = DEFAULT_CONTEST_PHASE,
-    apply_lens_distortion: bool = False,
+    distortion: str = "auto",
 ) -> list[str]:
     output_dir = Path(output)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    _remove_stale_submission_images(output_dir)
+    if distortion not in DISTORTION_MODES:
+        raise DataValidationError(f"Unknown distortion mode '{distortion}'. Expected one of: {', '.join(DISTORTION_MODES)}")
     camera_path, target_names = build_camera_path(
         targets,
         strict_contest=strict_contest,
         contest_phase=contest_phase,
     )
-    if apply_lens_distortion:
-        command = build_exact_render_command(checkpoint, targets, output_dir)
-        if not dry_run:
-            run_external_command(command)
-        return command
-    camera_path_file = output_dir / "camera_path.json"
-    nerfstudio_output = output_dir / "targets"
-    write_json(camera_path_file, camera_path)
-    command = build_render_command(checkpoint, camera_path_file, nerfstudio_output)
+    use_exact_renderer = distortion == "on" or (distortion == "auto" and targets_have_lens_distortion(targets))
     if dry_run:
+        if use_exact_renderer:
+            return build_exact_render_command(checkpoint, targets, output_dir)
+        return build_render_command(checkpoint, output_dir / "camera_path.json", output_dir / "targets")
+
+    output_dir.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{output_dir.name}.", dir=output_dir.parent))
+    try:
+        if use_exact_renderer:
+            command = build_exact_render_command(checkpoint, targets, staging)
+            run_external_command(command)
+            _verify_rendered_images(staging, target_names)
+            _promote_render_directory(staging, output_dir)
+            return command
+
+        camera_path_file = staging / "camera_path.json"
+        nerfstudio_output = staging / "targets"
+        write_json(camera_path_file, camera_path)
+        command = build_render_command(checkpoint, camera_path_file, nerfstudio_output)
+        run_external_command(command)
+        render_dir = rendered_image_directory(nerfstudio_output)
+        _rename_rendered_images(render_dir, staging, target_names)
+        if render_dir.exists():
+            shutil.rmtree(render_dir)
+        camera_path_file.unlink(missing_ok=True)
+        _verify_rendered_images(staging, target_names)
+        _promote_render_directory(staging, output_dir)
         return command
-    run_external_command(command)
-    _rename_rendered_images(rendered_image_directory(nerfstudio_output), output_dir, target_names)
-    return command
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
 
 
 def _rename_rendered_images(render_dir: Path, output_dir: Path, target_names: list[str]) -> None:
@@ -145,6 +182,42 @@ def _remove_stale_submission_images(output_dir: Path) -> None:
     for path in output_dir.iterdir():
         if path.is_file() and path.suffix.lower() in SUBMISSION_IMAGE_SUFFIXES:
             path.unlink()
+
+
+def _verify_rendered_images(output_dir: Path, target_names: list[str]) -> None:
+    expected = set(target_names)
+    actual = {
+        path.name
+        for path in output_dir.iterdir()
+        if path.is_file() and path.suffix.lower() in SUBMISSION_IMAGE_SUFFIXES
+    }
+    if actual != expected:
+        missing = sorted(expected - actual)
+        extra = sorted(actual - expected)
+        raise DataValidationError(f"Rendered image set mismatch; missing={missing}, extra={extra}")
+
+
+def _promote_render_directory(staging: Path, output: Path) -> None:
+    """Promote a complete staging directory while keeping the previous output recoverable."""
+    backup = output.parent / f".{output.name}.backup"
+    if backup.exists():
+        if output.exists():
+            shutil.rmtree(backup)
+        else:
+            os.replace(backup, output)
+    if output.exists() and not output.is_dir():
+        raise DataValidationError(f"Render output exists and is not a directory: {output}")
+    if output.exists():
+        os.replace(output, backup)
+    try:
+        os.replace(staging, output)
+    except Exception:
+        if backup.exists() and not output.exists():
+            os.replace(backup, output)
+        raise
+    else:
+        if backup.exists():
+            shutil.rmtree(backup)
 
 
 def _write_submission_image(source: Path, destination: Path) -> None:
@@ -167,9 +240,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true", help="Write camera path and print command without running.")
     parser.add_argument("--strict-contest", action="store_true", help="Enforce target-view limits from the selected rule set.")
     parser.add_argument(
-        "--apply-lens-distortion",
-        action="store_true",
-        help="Render with exact rectified intrinsics, then map pixels back through the source lens model.",
+        "--distortion",
+        choices=DISTORTION_MODES,
+        default="auto",
+        help="Lens-distortion handling: auto detects non-zero coefficients, on forces exact rendering, off disables it.",
     )
     parser.add_argument(
         "--contest-phase",
@@ -188,7 +262,7 @@ def main() -> None:
         dry_run=args.dry_run,
         strict_contest=args.strict_contest,
         contest_phase=args.contest_phase,
-        apply_lens_distortion=args.apply_lens_distortion,
+        distortion=args.distortion,
     )
     print(" ".join(command))
 

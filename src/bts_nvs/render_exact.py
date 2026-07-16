@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -10,6 +12,7 @@ from PIL import Image
 
 from bts_nvs.distortion import RectifiedCalibration, rectify_intrinsics, redistort_image
 from bts_nvs.exceptions import DataValidationError
+from bts_nvs.render import _promote_render_directory
 from bts_nvs.schema import frame_intrinsics, load_json, validate_transforms
 
 
@@ -59,35 +62,39 @@ def render_exact_targets(checkpoint: Path | str, targets: Path | str, output: Pa
             "Exact target rendering must run in the Python environment where Nerfstudio is installed."
         ) from exc
 
-    output_dir = Path(output)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    _remove_submission_images(output_dir)
     exact_targets = load_exact_targets(targets)
     _, pipeline, _, _ = eval_setup(Path(checkpoint), test_mode="inference")
-
-    for index, target in enumerate(exact_targets, start=1):
-        print(f"[{index}/{len(exact_targets)}] Rendering {target.name}", flush=True)
-        calibration = target.calibration
-        camera = Cameras(
-            camera_to_worlds=torch.tensor(target.transform_matrix, dtype=torch.float32)[None, :3, :4],
-            fx=calibration.render_fx,
-            fy=calibration.render_fy,
-            cx=calibration.render_cx,
-            cy=calibration.render_cy,
-            width=calibration.render_width,
-            height=calibration.render_height,
-            camera_type=CameraType.PERSPECTIVE,
-        ).to(pipeline.device)
-        # This is the same public rendering API used by Nerfstudio's ns-render:
-        # https://github.com/nerfstudio-project/nerfstudio/blob/main/nerfstudio/scripts/render.py
-        with torch.no_grad():
-            outputs = pipeline.model.get_outputs_for_camera(camera)
-        if "rgb" not in outputs:
-            raise DataValidationError(f"Nerfstudio model did not return an rgb output for {target.name}")
-        rectified = np.clip(outputs["rgb"].detach().cpu().numpy(), 0.0, 1.0)
-        distorted = redistort_image(rectified, calibration)
-        encoded = np.clip(np.rint(distorted * 255.0), 0, 255).astype(np.uint8)
-        _save_submission_image(encoded, output_dir / target.name)
+    output_dir = Path(output)
+    output_dir.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{output_dir.name}.", dir=output_dir.parent))
+    try:
+        for index, target in enumerate(exact_targets, start=1):
+            print(f"[{index}/{len(exact_targets)}] Rendering {target.name}", flush=True)
+            calibration = target.calibration
+            camera = Cameras(
+                camera_to_worlds=torch.tensor(target.transform_matrix, dtype=torch.float32)[None, :3, :4],
+                fx=calibration.render_fx,
+                fy=calibration.render_fy,
+                cx=calibration.render_cx,
+                cy=calibration.render_cy,
+                width=calibration.render_width,
+                height=calibration.render_height,
+                camera_type=CameraType.PERSPECTIVE,
+            ).to(pipeline.device)
+            # This is the same public rendering API used by Nerfstudio's ns-render:
+            # https://github.com/nerfstudio-project/nerfstudio/blob/main/nerfstudio/scripts/render.py
+            with torch.no_grad():
+                outputs = pipeline.model.get_outputs_for_camera(camera)
+            if "rgb" not in outputs:
+                raise DataValidationError(f"Nerfstudio model did not return an rgb output for {target.name}")
+            rectified = np.clip(outputs["rgb"].detach().cpu().numpy(), 0.0, 1.0)
+            distorted = redistort_image(rectified, calibration)
+            encoded = np.clip(np.rint(distorted * 255.0), 0, 255).astype(np.uint8)
+            _save_submission_image(encoded, staging / target.name)
+        _promote_render_directory(staging, output_dir)
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
 
 
 def _distortion_values(intrinsics: dict[str, Any]) -> dict[str, float]:

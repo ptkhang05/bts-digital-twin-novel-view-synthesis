@@ -12,6 +12,7 @@ from bts_nvs.render import (
     build_render_command,
     render_targets,
     rendered_image_directory,
+    targets_have_lens_distortion,
 )
 
 
@@ -131,7 +132,7 @@ def test_build_exact_render_command_uses_current_nerfstudio_python(tmp_path: Pat
     assert command[command.index("--targets") + 1] == str(tmp_path / "target_cameras.json")
 
 
-def test_render_targets_distortion_mode_routes_to_exact_renderer(tmp_path: Path):
+def test_render_targets_auto_distortion_routes_nonzero_model_to_exact_renderer(tmp_path: Path):
     targets = {
         "camera_model": "OPENCV",
         "fl_x": 10.0,
@@ -161,10 +162,83 @@ def test_render_targets_distortion_mode_routes_to_exact_renderer(tmp_path: Path)
         targets=target_file,
         output=tmp_path / "submission",
         dry_run=True,
-        apply_lens_distortion=True,
     )
 
     assert command[1:3] == ["-m", "bts_nvs.render_exact"]
+
+
+def test_targets_have_lens_distortion_is_false_for_pinhole_targets(tmp_path: Path):
+    targets = {
+        "camera_model": "SIMPLE_PINHOLE",
+        "fl_x": 10.0,
+        "fl_y": 10.0,
+        "cx": 8.0,
+        "cy": 6.0,
+        "w": 16,
+        "h": 12,
+        "frames": [
+            {
+                "file_path": "target.jpg",
+                "transform_matrix": [
+                    [1, 0, 0, 0],
+                    [0, 1, 0, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1],
+                ],
+            }
+        ],
+    }
+    target_file = tmp_path / "target_cameras.json"
+    target_file.write_text(json.dumps(targets), encoding="utf-8")
+
+    assert targets_have_lens_distortion(target_file) is False
+    command = render_targets(
+        checkpoint=tmp_path / "config.yml",
+        targets=target_file,
+        output=tmp_path / "submission",
+        dry_run=True,
+    )
+    assert command[:2] == ["ns-render", "camera-path"]
+
+
+def test_render_targets_failure_preserves_previous_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    targets = {
+        "camera_model": "SIMPLE_PINHOLE",
+        "fl_x": 10.0,
+        "fl_y": 10.0,
+        "cx": 8.0,
+        "cy": 6.0,
+        "w": 16,
+        "h": 12,
+        "frames": [
+            {
+                "file_path": "target.jpg",
+                "transform_matrix": [
+                    [1, 0, 0, 0],
+                    [0, 1, 0, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1],
+                ],
+            }
+        ],
+    }
+    target_file = tmp_path / "target_cameras.json"
+    target_file.write_text(json.dumps(targets), encoding="utf-8")
+    output = tmp_path / "candidate"
+    output.mkdir()
+    previous = output / "target.jpg"
+    previous.write_bytes(b"previous-good-render")
+
+    def fail_command(_command: list[str]) -> None:
+        raise RuntimeError("simulated renderer failure")
+
+    monkeypatch.setattr("bts_nvs.render.run_external_command", fail_command)
+
+    with pytest.raises(RuntimeError, match="simulated renderer failure"):
+        render_targets(tmp_path / "config.yml", target_file, output)
+
+    assert previous.read_bytes() == b"previous-good-render"
+    assert not list(tmp_path.glob(".candidate.*"))
 
 
 def test_rendered_image_directory_matches_nerfstudio_image_output_rule(tmp_path: Path):
