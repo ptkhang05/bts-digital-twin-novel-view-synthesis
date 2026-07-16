@@ -1,187 +1,230 @@
-# BTS Digital Twin Novel View Synthesis Baseline
+# BTS Digital Twin — Novel View Synthesis
 
-This repository provides a practical baseline pipeline for Viettel AI Race 2026
-VAR (`var-2026`), "BTS Digital Twin (Novel View Synthesis)". It prepares
-COLMAP/NeRF-style posed drone-image scenes for Nerfstudio, trains a 3D Gaussian
-Splatting model with `splatfacto`, renders RGB target views as PNG image
-sequences, evaluates predictions against holdout ground truth when available,
-and packages multi-scene predictions into a ZIP submission.
+Pipeline tái lập cho bộ dữ liệu hiện hành `VAI_NVS_DATA_ROUND2`: audit input,
+chuẩn bị camera COLMAP cho Nerfstudio, train/render có xử lý distortion, chấm
+holdout theo từng scene, tạo đúng một `submission.zip` và lưu phản hồi BTC trong
+ledger append-only.
 
-The general public problem statement says each scene contains 100-300 RGB images
-with camera intrinsics/poses and 20-50 target views. The round 1 brief says
-150-300 train images and 40-70 target views, but the released `private_set1`
-contains a scene with 103 train images and 26 target views. To avoid rejecting
-official BTC-provided data, this project validates phase1 with the observed
-safe envelope: 100-300 train images and 20-70 target views. The released phase1
-data uses COLMAP sparse reconstructions under `train/sparse/0` and target poses
-under `test/test_poses.csv`. Some BTC round text also refers to
-`test/test_pose.csv`; the loader accepts both names and prefers
-`test_poses.csv` when both exist. Public phase metadata lists `FILE_ZIP` submissions
-on `GPU` workers. The BTC PDF briefs show PNG examples, but the round 1 brief
-also says filenames must follow `image_name` in `test/test_poses.csv`. The
-phase1 CSV currently uses `.JPG` names, so submission packaging preserves exact
-target filenames.
+Nguồn vận hành chuẩn là [đặc tả BTC hiện hành](docs/current-btc-spec.md). Chính
+sách dữ liệu, Git và artifact được ghi tại
+[ADR-001](docs/decisions/001-round2-artifact-policy.md).
 
-Source: https://competition.viettel.vn/contests/var-2026
+## Nền tảng hỗ trợ
 
-Local text snapshots from the BTC pages are kept in `docs/btc-main.md` and
-`docs/btc-round1.md` so VM clones have the same readable reference without
-committing the original PDF files.
+- Local: Windows, Python 3.13 trong `.venv`, CPU-only.
+- Train/render: Ubuntu 22.04 x86-64 với NVIDIA GPU.
+- Không hỗ trợ macOS.
 
-## Install
+Máy Windows không cần CUDA, Nerfstudio GPU, COLMAP hoặc Node. Sparse
+reconstruction đã có trong input BTC và không được chạy COLMAP lại.
+
+## Cài đặt local Windows
+
+Dependency CPU được khóa phiên bản. `TORCH_HOME` được đặt trong workspace để
+LPIPS/AlexNet không ghi cache ra ngoài folder dự án:
 
 ```powershell
-python -m pip install -e ".[dev]"
+$env:TORCH_HOME = (Join-Path $PWD ".cache\torch")
+.\.venv\Scripts\python.exe -m pip install pip==26.0.1
+.\.venv\Scripts\python.exe -m pip install `
+  --extra-index-url https://download.pytorch.org/whl/cpu `
+  -c requirements\constraints-cpu.txt `
+  -c requirements\constraints-perceptual-cpu.txt `
+  -e ".[dev,metrics,perceptual]"
+.\.venv\Scripts\python.exe -m pip check
 ```
 
-Install Nerfstudio separately in the environment used for training/rendering.
-The local tests do not require Nerfstudio because this package treats
-`ns-train` and `ns-render` as external commands.
+Weight AlexNet pretrained chỉ được dùng để tính LPIPS, không được dùng để train
+hoặc sinh ảnh. Lần tính metric đầu tiên có thể tải weight vào `.cache\torch`; thư
+mục này bị Git ignore. Không dùng editable install global.
 
-## Scene Layout
+## Dataset contract đã xác minh
 
-Supported raw scene inputs:
+`manifests/vai_nvs_round2.json` khóa các bất biến sau:
 
-- Viettel/VAI phase1 scene layout:
-  - `train/images/`
-  - `train/sparse/0/{cameras,images,points3D}.bin`
-  - `test/test_poses.csv` or `test/test_pose.csv`
-- Nerfstudio/NeRF-style `train_cameras.json` or `transforms.json` plus `images/`.
-- COLMAP sparse reconstruction in `sparse/0`, `sparse`, or `colmap/sparse/0`
-  plus `images/`.
+- 7 scene, 1.653 ảnh train và 386 target.
+- 5 scene HCM dùng `SIMPLE_RADIAL`; distortion lấy từ `cameras.bin`.
+- Tổng 298 registered pose dư bị loại bằng tập tên ảnh train chính xác.
+- Tên, case và kích thước target lấy từ `test/test_poses.csv`.
 
-Target views use the same JSON camera schema as `transforms.json`.
-
-When a raw scene contains `target_cameras.json`, `prepare` validates and copies
-it to the processed scene. For VAI phase1 scenes, `prepare` converts
-`test/test_poses.csv` or `test/test_pose.csv` into `target_cameras.json`. Use `--strict-contest` with
-`--contest-phase` to enforce a known BTC rule set:
-
-- `phase1`: 100-300 training images, 20-70 target cameras. This matches the
-  observed public/private phase1 data currently present in `VAI_NVS_DATA`.
-- `overview`: 100-300 training images, 20-50 target cameras.
-
-## Commands
-
-```powershell
-python -m bts_nvs.prepare_dataset --root VAI_NVS_DATA/phase1/public_set --out processed/public_set --copy-mode hardlink --strict-contest
-python -m bts_nvs.prepare --scene raw_scene --out processed_scene --strict-contest
-python -m bts_nvs.train --scene processed_scene --preset fast
-python -m bts_nvs.train --scene processed_scene --preset fast --disable-pose-normalization -- --viewer.quit-on-train-completion True
-python -m bts_nvs.train --scene processed_scene --preset quality-aa --disable-pose-normalization -- --max-num-iterations 30000 --viewer.quit-on-train-completion True
-python -m bts_nvs.render --checkpoint outputs/.../config.yml --targets processed_scene/target_cameras.json --out submission/scene_id --strict-contest
-python -m bts_nvs.render --checkpoint outputs/.../config.yml --targets processed_scene/target_cameras.json --out submission/scene_id --strict-contest --apply-lens-distortion
-python -m bts_nvs.evaluate --pred submission/scene_id --gt VAI_NVS_DATA/phase1/public_set/scene_id/test/images --match-by-stem --psnr-max 50
-python -m bts_nvs.score_submission --data-root VAI_NVS_DATA/phase1/public_set --submission submission/public_variant --match-by-stem --psnr-max 50 --out metrics/public_variant.json
-python -m bts_nvs.package --submission submission --out submission.zip
-python -m bts_nvs.validate_submission --data-root VAI_NVS_DATA/phase1/private_set1 --submission submission.zip
-```
-
-If no trained Nerfstudio checkpoint is available yet, create a low-cost
-submission smoke test with temporal blending between adjacent drone frames:
-
-```powershell
-python -m bts_nvs.nearest_view --root VAI_NVS_DATA/phase1/private_set1 --out submission/temporal_blend_private_set1 --selection-mode temporal-blend --blend-weight-policy linear --jpeg-quality 95
-python -m bts_nvs.package --submission submission/temporal_blend_private_set1 --out submission_round1.zip
-python -m bts_nvs.validate_submission --data-root VAI_NVS_DATA/phase1/private_set1 --submission submission_round1.zip
-```
-
-For phase1, this writes exact `image_name` filenames such as
-`DJI_..._V.JPG`. This avoids a zero-score failure mode where scenes match but
-per-pose images are treated as missing because `.JPG` target names were changed
-to `.png`. The `temporal-blend` mode uses the frame number in target filenames
-to blend the closest preceding and following train frames. It is a stronger
-no-training fallback than copying one nearest view, but it is still not a
-replacement for per-scene 3DGS reconstruction.
-
-Non-dry-run training captures the external `ns-train` output to
-`<processed_scene>/training.log` by default. Override it with `--log-file` when
-you want logs outside the processed scene directory.
-
-For a dry run that prints the external command without running Nerfstudio:
-
-```powershell
-python -m bts_nvs.train --scene processed_scene --dry-run
-python -m bts_nvs.render --checkpoint outputs/.../config.yml --targets target_cameras.json --out submission/scene_id --dry-run
-```
-
-## Submission Layout
-
-The package command writes supported image files into the archive:
+Mỗi scene có cấu trúc:
 
 ```text
-submission.zip
-  scene_001/
-    <target_image_name>
-    <another_target_image_name>
-  scene_002/
-    <target_image_name>
+scene_id/
+  train/images/*.[jJ][pP][gG]
+  train/sparse/0/cameras.bin
+  train/sparse/0/images.bin
+  train/sparse/0/points3D.bin
+  test/test_poses.csv
 ```
 
-For VAI phase1, rendered filenames follow the `image_name` column in
-`test/test_poses.csv` exactly. The general problem statement also shows
-numbered PNG filenames such as `0001.png`; treat that as illustrative unless a
-round-specific adapter says otherwise.
+CSV và manifest là nguồn chuẩn khi ví dụ trong văn bản BTC mâu thuẫn với input.
 
-Before uploading, validate the folder or ZIP against the BTC CSVs:
+## Cài input mới và audit
+
+Nếu input được tải dưới dạng ZIP, dùng ingestor an toàn. Lệnh chỉ nhận đúng member
+trong manifest, audit staging, atomic-promote và chỉ xóa archive sau khi thành
+công:
 
 ```powershell
-python -m bts_nvs.validate_submission --data-root VAI_NVS_DATA/phase1/private_set1 --submission submission_round1.zip
+.\.venv\Scripts\python.exe -m bts_nvs.ingest `
+  --archive VAI_NVS_DATA_ROUND2.zip `
+  --data-root VAI_NVS_DATA_ROUND2 `
+  --manifest manifests\vai_nvs_round2.json
 ```
 
-The validator checks scene folders, exact target filenames, missing or extra
-images, image dimensions from `test_poses.csv`, readable image files, RGB mode,
-and rejects ZIP members that are not directly under `scene_id/image_name`.
+Kiểm tra lại input hiện có mà không sửa manifest:
 
-## VAI Phase1 Notes
+```powershell
+.\.venv\Scripts\python.exe -m bts_nvs.audit `
+  --data-root VAI_NVS_DATA_ROUND2 `
+  --check-manifest manifests\vai_nvs_round2.json
+```
 
-- `train/sparse/0/images.bin` can contain poses for images not present in
-  `train/images`; the converter filters COLMAP registered images to files that
-  actually exist in `train/images`.
-- `test_poses.csv` labels `tx,ty,tz` as camera translation. Earlier versions of
-  this repo treated those values as a world-space camera center, but a public
-  probe on `hcm0031` showed the COLMAP/OpenCV `tvec` interpretation was much
-  better for Nerfstudio rendering. The adapter now converts `qw,qx,qy,qz` plus
-  `tx,ty,tz` as an OpenCV world-to-camera pose into Nerfstudio/OpenGL
-  camera-to-world matrices.
-- Nerfstudio's default dataparser recenters, orients, and rescales poses. When
-  rendering BTC target poses that are already in the same COLMAP coordinate
-  frame, train with `--disable-pose-normalization` so target camera paths stay
-  in the same frame as the trained model.
-- Splatfacto undistorts full training images and updates their intrinsics before
-  training. Use `--apply-lens-distortion` to render target views with exact
-  full-FOV pinhole intrinsics and map the result back through the scene's COLMAP
-  lens model. This is especially important for the phase1 HNI scenes, whose
-  radial distortion is much stronger than the HCM scenes. Run this option in
-  the same Python environment as Nerfstudio; it uses Nerfstudio's public model
-  rendering API and OpenCV.
-- Rendered predictions from Nerfstudio are PNGs by default, while phase1 target
-  filenames are often `.JPG`. Preserve exact target names for submission, or the
-  evaluator may mark images missing even when scene directories match.
-- The low-cost fallback supports `--selection-mode nearest-pose`,
-  `--selection-mode temporal-nearest`, and `--selection-mode temporal-blend`.
-  `temporal-blend` defaults to `--blend-weight-policy linear`, which is the
-  strongest private-set fallback observed so far. `midpoint` had slightly
-  higher local public-set PSNR, but the private leaderboard score was lower
-  because SSIM/LPIPS regressed.
-  On the released public set, temporal blend improved internal PSNR from about
-  9.22 dB for pose-nearest copying to about 10.95 dB for linear blending.
-  This is local validation, not a guaranteed private-set score.
-- When SSIM and LPIPS dependencies are installed, `evaluate` also reports BTC's
-  aggregate score: `0.4 * (1 - LPIPS) + 0.3 * SSIM + 0.3 * psnr_norm`, where
-  `psnr_norm = clamp(PSNR / --psnr-max, 0, 1)`. The current default is
-  `--psnr-max 50`, which matches the observed phase1 leaderboard scale.
-- Use `score_submission` on `public_set` variants before spending GPU time on a
-  full private render. It reports both aggregate metrics and per-scene metrics,
-  which makes regressions easier to localize than BTC's private aggregate score.
-- Treat 30,000 iterations as the current phase1 baseline for `splatfacto-big`.
-  The private 60,000-iteration run scored `57.85830`, below the otherwise
-  equivalent 30,000-iteration run at `58.30090`; all three reported metrics
-  regressed. Nerfstudio's Splatfacto optimizer schedules are also configured
-  around 30,000 steps. The CLI now warns when an explicit iteration budget
-  exceeds that value.
-- `--preset quality-aa` is an experimental `splatfacto-big` variant using
-  gsplat's antialiased rasterizer. Nerfstudio documents this mode as compensating
-  tiny splats when render resolution differs from capture resolution. Score it
-  across all five public scenes before using it for private scenes; it is not a
-  confirmed leaderboard improvement yet.
+Chỉ dùng `--manifest manifests\vai_nvs_round2.json` khi chủ ý sinh lại manifest
+từ một dataset đã được xác minh độc lập.
+
+## Holdout local proxy
+
+Holdout cố định được chọn sau khi sort filename lexicographic; các vị trí có
+`(index + 1) mod 10 = 0` làm ground truth:
+
+```powershell
+.\.venv\Scripts\python.exe -m bts_nvs.holdout `
+  --data-root VAI_NVS_DATA_ROUND2 `
+  --processed-root processed\holdout `
+  --ground-truth-root processed\holdout-ground-truth `
+  --interval 10 `
+  --copy-mode hardlink `
+  --overwrite
+```
+
+Train 7 scene với `quality` và `quality-aa`, render từng
+`processed/holdout/<scene>/holdout_cameras.json`, rồi chấm toàn submission:
+
+```powershell
+$env:TORCH_HOME = (Join-Path $PWD ".cache\torch")
+.\.venv\Scripts\python.exe -m bts_nvs.score_submission `
+  --data-root processed\holdout-ground-truth `
+  --submission outputs\.staging\holdout-quality\rendered `
+  --psnr-max 50 `
+  --out outputs\.staging\holdout-quality\metrics.json
+```
+
+Validator chạy trước metric; thiếu/thừa/sai ảnh sẽ bị từ chối. Score tổng là
+trung bình đều score của 7 scene. `PSNR_max=50` chỉ là proxy local vì BTC chưa
+công bố giá trị chính thức; không gọi metric holdout là điểm BTC.
+
+## Chuẩn bị full train, train và render
+
+Chuẩn bị dữ liệu với provenance đã xác minh:
+
+```powershell
+.\.venv\Scripts\python.exe -m bts_nvs.prepare_dataset `
+  --root VAI_NVS_DATA_ROUND2 `
+  --out processed\full `
+  --copy-mode hardlink `
+  --dataset-id vai_nvs_round2 `
+  --manifest manifests\vai_nvs_round2.json `
+  --overwrite
+```
+
+Train/render thực tế chạy trên máy GPU Linux; xem
+[hướng dẫn Ubuntu GPU](docs/gpu-vm.md). Các CLI lõi:
+
+```text
+python -m bts_nvs.train --scene <processed-scene> --preset quality ...
+python -m bts_nvs.render --checkpoint <config.yml> --targets <target_cameras.json> --out <scene-output> --distortion auto
+```
+
+- `quality`: `splatfacto-big`, rasterization `classic`.
+- `quality-aa`: cùng cấu hình nhưng `antialiased`.
+- `fast`: smoke kỹ thuật 500 iteration, không dùng làm candidate cuối.
+
+Pose normalization mặc định bị tắt để giữ COLMAP frame. Chỉ dùng
+`--debug-allow-pose-normalization` cho debug có chủ ý. `--distortion auto` dùng
+exact/redistort cho `SIMPLE_RADIAL` và render thường cho pinhole. Render là
+transactional; lỗi giữa chừng không thay output hợp lệ trước đó.
+
+## Tạo ZIP duy nhất
+
+Candidate phải nằm tại `outputs/candidate/rendered/<scene>`:
+
+```powershell
+.\.venv\Scripts\python.exe -m bts_nvs.submit `
+  --data-root VAI_NVS_DATA_ROUND2 `
+  --submission outputs\candidate\rendered `
+  --out submission.zip
+```
+
+`submit` kiểm tra đủ 7 scene/386 ảnh, exact filename/case/kích thước, RGB JPEG,
+duplicate member và CRC. ZIP chỉ được atomic-replace sau khi validation và
+SHA-256 thành công. Không tạo ZIP timestamp hoặc đổi đuôi PNG thành `.JPG`.
+
+## Ghi phản hồi BTC và chọn best
+
+Sau khi người dùng trả điểm chính thức, ghi feedback đầy đủ. Các tham số JSON là
+JSON inline, không phải đường dẫn file:
+
+```powershell
+$metrics = Get-Content -Raw outputs\.staging\holdout-quality\metrics.json
+.\.venv\Scripts\python.exe -m bts_nvs.feedback `
+  --submission-id round2-001 `
+  --dataset-id vai_nvs_round2 `
+  --score <official-score> `
+  --data-root VAI_NVS_DATA_ROUND2 `
+  --dataset-manifest-sha256 4839983968385ec56a418909bd70c77a310233b328762db1a2f4bde1c7bcadb8 `
+  --git-commit "$(git rev-parse HEAD)" `
+  --container-image-digest <derived-image-id> `
+  --command "<exact-train-and-render-command>" `
+  --config-json '{"preset":"quality","rasterization":"classic"}' `
+  --metrics-json $metrics `
+  --seed 42 `
+  --iterations 30000 `
+  --distortion auto `
+  --jpeg-quality 95 `
+  --hardware-json '{"gpu":"<model>","vram_gib":<number>}' `
+  --gpu-time-seconds <seconds> `
+  --hypothesis "classic baseline" `
+  --next-action "change exactly one variable"
+
+.\.venv\Scripts\python.exe -m bts_nvs.ledger best `
+  --dataset-id vai_nvs_round2
+```
+
+`feedback` xác minh `submission.zip` khớp candidate trước khi thay đổi trạng
+thái. Điểm cao hơn được promote; hòa điểm ưu tiên GPU-time thấp hơn, sau đó ZIP
+nhỏ hơn; thiếu dữ liệu tie-break thì giữ incumbent. Candidate thua bị xóa và ZIP
+được tái tạo từ best. Chỉ so sánh record cùng dataset. Ledger duy nhất là
+`experiments/submission_history.jsonl`; không chạy nhiều writer đồng thời.
+
+`python -m bts_nvs.ledger add-feedback` chỉ dùng để nhập feedback lịch sử khi
+không còn artifact candidate/best cần chuyển trạng thái.
+
+## Artifact và Git
+
+```text
+outputs/
+  candidate/  # lần cải thiện đang chờ phản hồi
+  best/       # tốt nhất đã được BTC xác nhận
+  .staging/   # tạm thời, tự dọn
+submission.zip
+```
+
+Raw input, raw yêu cầu BTC, output, checkpoint/log và ZIP chỉ giữ local và bị
+Git ignore. Code, config, manifest, ledger, tài liệu và CI đi qua branch/PR trên
+repo private. VM clone đúng commit bằng deploy key read-only; không copy PAT hay
+phiên đăng nhập GitHub lên VM.
+
+## Quality gates
+
+```powershell
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m build --no-isolation
+.\.venv\Scripts\python.exe -m pip check
+```
+
+GitHub Actions chạy `ruff`, `pytest`, build wheel/sdist và `pip check` trên Python
+3.10 và 3.13. GPU smoke vẫn phải chạy trên VM vì CI không có CUDA hoặc raw input
+BTC.
