@@ -5,6 +5,7 @@ services:
       dockerfile: infra/gpu/Dockerfile
     image: bts-nvs-gpu:nerfstudio-1.1.5
     working_dir: /workspace
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     ipc: host
     gpus: all
     stdin_open: true

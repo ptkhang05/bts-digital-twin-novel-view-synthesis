@@ -13,6 +13,9 @@ fi
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
+export HOST_UID="$(id -u)"
+export HOST_GID="$(id -g)"
+
 compose_file='infra/gpu/docker-compose.yml'
 
 nvidia-smi

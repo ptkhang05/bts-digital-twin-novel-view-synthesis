@@ -103,6 +103,8 @@ dữ liệu cũ.
 ## Build và GPU smoke bắt buộc
 
 ```bash
+export HOST_UID="$(id -u)"
+export HOST_GID="$(id -g)"
 bash infra/gpu/smoke_chair.sh 2>&1 | tee processed/chair-smoke.log
 ```
 
@@ -110,7 +112,8 @@ Script này chạy chính derived Compose image với `--gpus all --ipc=host`, k
 `nvidia-smi`, PyTorch CUDA, `ns-train`, `ns-render`, VRAM; train `chair` 500
 iteration; render target; rồi strict-validate tên, RGB JPEG và kích thước. Bất kỳ
 CUDA/render/dimension/OOM nào đều chặn thí nghiệm tiếp theo. `outputs/.staging`
-được dọn bằng trap cả khi thành công lẫn lỗi.
+được dọn bằng trap cả khi thành công lẫn lỗi. Giữ `HOST_UID`/`HOST_GID` trong
+shell hiện tại cho các lệnh Compose tiếp theo để artifact thuộc user host.
 
 ## Holdout classic so với antialiased
 
