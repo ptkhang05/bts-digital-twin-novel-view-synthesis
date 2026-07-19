@@ -3,6 +3,9 @@ services:
     build:
       context: ../..
       dockerfile: infra/gpu/Dockerfile
+      args:
+        HOST_UID: "${HOST_UID:?HOST_UID must be set}"
+        HOST_GID: "${HOST_GID:?HOST_GID must be set}"
     image: bts-nvs-gpu:nerfstudio-1.1.5
     working_dir: /workspace
     user: "${HOST_UID:?HOST_UID must be set}:${HOST_GID:?HOST_GID must be set}"
