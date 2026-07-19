@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted; visibility/deploy-key clauses superseded by ADR-002
 
 ## Date
 

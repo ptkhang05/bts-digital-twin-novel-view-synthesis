@@ -1,6 +1,8 @@
 # Ubuntu GPU worker
 
-Chỉ dùng Ubuntu 22.04 x86-64. Không dùng hoặc hỗ trợ macOS.
+Dùng host Ubuntu 22.04 hoặc 24.04 x86-64. Vòng đầu đã chạy thành công trên
+Ubuntu 24.04.3; môi trường train bên trong image vẫn được pin ở Ubuntu
+22.04/CUDA 11.8. Không dùng hoặc hỗ trợ macOS.
 
 ## Cấu hình và điều kiện dừng
 
@@ -49,28 +51,19 @@ docker compose version
 Không cài CUDA toolkit, Nerfstudio hoặc COLMAP trực tiếp lên host; chúng nằm trong
 container. Không chạy COLMAP lại.
 
-## Clone private repo
+## Clone public repo
 
-Tạo key riêng ngay trên VM:
-
-```bash
-ssh-keygen -t ed25519 -f ~/.ssh/bts_nvs_deploy -C bts-nvs-gpu-vm -N ''
-cat ~/.ssh/bts_nvs_deploy.pub
-```
-
-Thêm public key vào repository dưới dạng deploy key **read-only**. Xác nhận host
-key GitHub theo [SSH key fingerprints chính thức](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints), rồi clone đúng commit:
+Repo hiện hành là public. Clone read-only qua HTTPS rồi checkout đúng commit:
 
 ```bash
-export GIT_SSH_COMMAND='ssh -i ~/.ssh/bts_nvs_deploy -o IdentitiesOnly=yes'
-git clone git@github.com:ptkhang05/bts-digital-twin-novel-view-synthesis.git
+git clone https://github.com/ptkhang05/bts-digital-twin-novel-view-synthesis.git
 cd bts-digital-twin-novel-view-synthesis
 git checkout '<exact-commit-sha>'
 mkdir -p processed outputs/candidate outputs/best outputs/.staging
 ```
 
-Không copy PAT, phiên `gh auth` hoặc private key máy local lên VM. Thu hồi deploy
-key trên GitHub khi hủy VM.
+Không cấu hình PAT, phiên `gh auth`, deploy key hoặc private key máy local trên
+VM. Raw input/output tiếp tục chỉ tồn tại local và bị Git ignore.
 
 ## Tải, extract an toàn và xác minh input
 
@@ -141,31 +134,151 @@ for preset in quality quality-aa; do
       --preset "$preset" \
       --output-dir "outputs/.staging/holdout-$preset/training" \
       --experiment-name "$scene" \
-      -- --max-num-iterations 10000 --viewer.quit-on-train-completion True
+      -- --machine.seed 42 --max-num-iterations 10000 \
+      --viewer.quit-on-train-completion True
   done
 done
 ```
 
 Với mỗi config đã train, render `processed/holdout/<scene>/holdout_cameras.json`
 vào `outputs/.staging/holdout-<preset>/rendered/<scene>` bằng
-`python -m bts_nvs.render --distortion auto`. Sau đủ 7 scene:
+`python -m bts_nvs.render --distortion auto`. Sau đủ 7 scene, lưu hai kết quả
+so sánh ra `processed` trước khi dọn staging:
 
 ```bash
+mkdir -p processed/holdout-comparison
+
 docker compose -f infra/gpu/docker-compose.yml run --rm nvs \
   python -m bts_nvs.score_submission \
   --data-root processed/holdout-ground-truth \
   --submission outputs/.staging/holdout-quality/rendered \
   --psnr-max 50 \
-  --out outputs/.staging/holdout-quality/metrics.json
+  --out processed/holdout-comparison/classic.json
+
+docker compose -f infra/gpu/docker-compose.yml run --rm nvs \
+  python -m bts_nvs.score_submission \
+  --data-root processed/holdout-ground-truth \
+  --submission outputs/.staging/holdout-quality-aa/rendered \
+  --psnr-max 50 \
+  --out processed/holdout-comparison/antialiased.json
 ```
 
-Lặp cho `quality-aa`. Chọn equal-scene proxy cao hơn; hòa thì giữ `quality`
-(`classic`). Đây là proxy local, không phải điểm BTC.
+Chọn equal-scene proxy cao hơn; hòa thì giữ `quality` (`classic`). Đây là proxy
+local, không phải điểm BTC.
+
+### Hiệu chuẩn holdout 30k sau feedback đầu tiên
+
+Submission đầu tiên dùng 30.000 iteration nhưng A/B ban đầu chỉ dùng holdout
+10.000 iteration. Trước khi tune model, hiệu chuẩn lại baseline bằng cách chỉ đổi
+`max-num-iterations` từ 10.000 thành 30.000; giữ nguyên split, seed, preset
+`quality`, pose normalization, distortion và JPEG quality. Kết quả 10k incumbent
+là `0.6955825215814241` theo equal-scene proxy.
+
+Không xóa checkpoint 30k sau khi chấm vì đây là baseline cho A/B tiếp theo:
+
+```bash
+set -euo pipefail
+export HOST_UID="$(id -u)"
+export HOST_GID="$(id -g)"
+
+test -f processed/holdout-comparison/classic.json
+test "$(find processed/holdout-ground-truth -type f -iname '*.jpg' | wc -l)" -eq 164
+if [[ -d outputs/.staging/holdout-quality-30k ]] \
+  && find outputs/.staging/holdout-quality-30k -mindepth 1 -print -quit | grep -q .; then
+  echo "30k holdout staging is not empty; stop to avoid mixing runs" >&2
+  exit 1
+fi
+
+scenes=(bonsai chair HCM0421 HCM0539 HCM0540 HCM0644 HCM0674)
+for scene in "${scenes[@]}"; do
+  docker compose -f infra/gpu/docker-compose.yml run --rm nvs \
+    python -m bts_nvs.train \
+    --scene "processed/holdout/$scene" \
+    --preset quality \
+    --output-dir outputs/.staging/holdout-quality-30k/training \
+    --experiment-name "$scene" \
+    --log-file "processed/holdout-quality-30k-$scene-train.log" \
+    -- --machine.seed 42 --max-num-iterations 30000 \
+    --viewer.quit-on-train-completion True
+done
+
+test "$(find outputs/.staging/holdout-quality-30k/training \
+  -type f -name 'step-000029999.ckpt' | wc -l)" -eq 7
+
+if grep -nE 'Traceback|ExternalCommandError|CUDA out of memory|PermissionError' \
+  processed/holdout-quality-30k-*-train.log; then
+  echo "30k holdout logs contain errors; stop before rendering" >&2
+  exit 1
+fi
+
+for scene in "${scenes[@]}"; do
+  config="$(find "outputs/.staging/holdout-quality-30k/training/$scene" \
+    -type f -name config.yml -print | sort | tail -1)"
+  test -n "$config"
+  docker compose -f infra/gpu/docker-compose.yml run --rm nvs \
+    python -m bts_nvs.render \
+    --checkpoint "$config" \
+    --targets "processed/holdout/$scene/holdout_cameras.json" \
+    --out "outputs/.staging/holdout-quality-30k/rendered/$scene" \
+    --distortion auto
+done
+
+docker compose -f infra/gpu/docker-compose.yml run --rm nvs \
+  python -m bts_nvs.score_submission \
+  --data-root processed/holdout-ground-truth \
+  --submission outputs/.staging/holdout-quality-30k/rendered \
+  --psnr-max 50 \
+  --out processed/holdout-comparison/classic-30k.json
+```
+
+So sánh đúng hai JSON cùng split và cùng công thức:
+
+```bash
+.bootstrap-venv/bin/python - <<'PY'
+import json
+from pathlib import Path
+
+baseline = json.loads(Path("processed/holdout-comparison/classic.json").read_text())
+challenger = json.loads(Path("processed/holdout-comparison/classic-30k.json").read_text())
+expected_counts = {
+    "bonsai": 24,
+    "chair": 20,
+    "HCM0421": 24,
+    "HCM0539": 24,
+    "HCM0540": 24,
+    "HCM0644": 24,
+    "HCM0674": 24,
+}
+def scene_counts(payload):
+    return {row["scene"]: row["count"] for row in payload["scenes"]}
+
+
+assert baseline["aggregate"]["count"] == challenger["aggregate"]["count"] == 164
+assert scene_counts(baseline) == scene_counts(challenger) == expected_counts
+assert baseline["scoring"] == challenger["scoring"]
+delta = challenger["aggregate"]["score"] - baseline["aggregate"]["score"]
+print(f"classic_10k={baseline['aggregate']['score']:.12f}")
+print(f"classic_30k={challenger['aggregate']['score']:.12f}")
+print(f"delta={delta:+.12f} ({delta * 100:+.6f} leaderboard points)")
+PY
+```
+
+Đây chỉ là calibration, không tạo submission mới. Nếu 30k thắng, dùng JSON 30k
+làm incumbent local cho thí nghiệm kế tiếp: giữ sáu scene classic và A/B riêng
+`bonsai` với rasterization `classic`/`antialiased` ở 30k, cùng seed. Nếu 30k
+không thắng, ghi kết quả rồi dừng: không tự động full-train 10k, không render
+target và không thay ZIP. Khi đó phải lập một protocol một-biến mới trước khi
+chạy tiếp. Dữ liệu 10k hiện có dự báo hybrid bonsai chỉ tăng khoảng `0.0363`
+điểm toàn bài, nên phải xác nhận lại ở 30k trước khi retrain full hoặc thay
+`submission.zip`.
 
 ## Train full và render candidate
 
-Chuẩn bị 100% train với manifest provenance, rồi train preset thắng 30.000 iteration
-cho cả 7 scene. Pose normalization vẫn tắt; distortion là `auto`; JPEG quality 95:
+Đây là quy trình tạo candidate sau khi một challenger đã thắng protocol holdout
+được ghi trong ledger; calibration 30k ở trên tự nó không mở gate này. Baseline
+đầu tiên đã dùng preset `quality` 30.000 iteration. Mọi candidate sau phải dùng
+đúng cấu hình/iterations thắng thí nghiệm một-biến đã định trước cho cả 7 scene.
+Pose normalization vẫn tắt; distortion là `auto`; JPEG quality 95:
 
 ```bash
 docker compose -f infra/gpu/docker-compose.yml run --rm nvs \

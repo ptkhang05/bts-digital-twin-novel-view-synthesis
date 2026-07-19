@@ -7,12 +7,14 @@ ledger append-only.
 
 Nguồn vận hành chuẩn là [đặc tả BTC hiện hành](docs/current-btc-spec.md). Chính
 sách dữ liệu, Git và artifact được ghi tại
-[ADR-001](docs/decisions/001-round2-artifact-policy.md).
+[ADR-001](docs/decisions/001-round2-artifact-policy.md) và quyết định visibility
+hiện hành tại [ADR-002](docs/decisions/002-public-repository.md).
 
 ## Nền tảng hỗ trợ
 
 - Local: Windows, Python 3.13 trong `.venv`, CPU-only.
-- Train/render: Ubuntu 22.04 x86-64 với NVIDIA GPU.
+- Train/render: host Ubuntu 22.04/24.04 x86-64 với NVIDIA GPU; container được
+  pin trên Ubuntu 22.04/CUDA 11.8.
 - Không hỗ trợ macOS.
 
 Máy Windows không cần CUDA, Nerfstudio GPU, COLMAP hoặc Node. Sparse
@@ -108,12 +110,14 @@ $env:TORCH_HOME = (Join-Path $PWD ".cache\torch")
   --data-root processed\holdout-ground-truth `
   --submission outputs\.staging\holdout-quality\rendered `
   --psnr-max 50 `
-  --out outputs\.staging\holdout-quality\metrics.json
+  --out processed\holdout-comparison\classic.json
 ```
 
 Validator chạy trước metric; thiếu/thừa/sai ảnh sẽ bị từ chối. Score tổng là
-trung bình đều score của 7 scene. `PSNR_max=50` chỉ là proxy local vì BTC chưa
-công bố giá trị chính thức; không gọi metric holdout là điểm BTC.
+trung bình đều score của 7 scene. Văn bản BTC không nêu `PSNR_max`, nhưng kết
+quả chính thức đầu tiên khớp `PSNR_max=50` tới độ chính xác hiển thị. Đây là xác
+nhận thực nghiệm cho vòng hiện tại, không phải một công bố bằng văn bản. Metric
+holdout vẫn là proxy local, không được gọi là điểm BTC.
 
 ## Chuẩn bị full train, train và render
 
@@ -167,7 +171,7 @@ Sau khi người dùng trả điểm chính thức, ghi feedback đầy đủ. C
 JSON inline, không phải đường dẫn file:
 
 ```powershell
-$metrics = Get-Content -Raw outputs\.staging\holdout-quality\metrics.json
+$metrics = Get-Content -Raw processed\holdout-comparison\classic.json
 .\.venv\Scripts\python.exe -m bts_nvs.feedback `
   --submission-id round2-001 `
   --dataset-id vai_nvs_round2 `
@@ -213,8 +217,8 @@ submission.zip
 
 Raw input, raw yêu cầu BTC, output, checkpoint/log và ZIP chỉ giữ local và bị
 Git ignore. Code, config, manifest, ledger, tài liệu và CI đi qua branch/PR trên
-repo private. VM clone đúng commit bằng deploy key read-only; không copy PAT hay
-phiên đăng nhập GitHub lên VM.
+repo public. VM clone read-only qua HTTPS rồi checkout đúng commit; không cần
+deploy key, PAT hay phiên đăng nhập GitHub.
 
 ## Quality gates
 

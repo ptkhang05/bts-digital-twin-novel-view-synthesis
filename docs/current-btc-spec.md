@@ -1,6 +1,6 @@
 # Đặc tả vận hành BTC hiện hành
 
-Ngày đối chiếu: 2026-07-16 (Asia/Ho_Chi_Minh).
+Ngày đối chiếu: 2026-07-19 (Asia/Ho_Chi_Minh).
 
 Tài liệu này là bản dẫn xuất có thể commit. Hai file yêu cầu gốc của BTC và dữ
 liệu ảnh được giữ local, không đưa lên Git. Khi văn bản mô tả và dữ liệu thực tế
@@ -40,10 +40,42 @@ center trong world space.
 - Phải đủ và chỉ đủ 7 scene/386 ảnh RGB JPEG, đúng tên, case và kích thước.
 - BTC công bố `0.4*(1-LPIPS) + 0.3*SSIM + 0.3*PSNR_norm`, trong đó
   `PSNR_norm=clamp(PSNR/PSNR_max,0,1)` và điểm cuối là trung bình đều theo scene.
-- BTC chưa công bố giá trị `PSNR_max`. Giá trị 50 trong repo chỉ là proxy local
-  và mọi báo cáo phải gắn nhãn rõ ràng.
+- Văn bản BTC chưa công bố giá trị `PSNR_max`. Kết quả chính thức đầu tiên
+  (`70.08000`, PSNR `24.27611`, SSIM `79.3611`, LPIPS `20.735`) khớp công thức
+  tới độ chính xác hiển thị khi `PSNR_max=50`: điểm tính lại là `70.079996`.
+  Vì vậy 50 được xem là **đã xác nhận thực nghiệm cho vòng hiện tại**, nhưng
+  không được mô tả là giá trị BTC đã công bố bằng văn bản.
 - Bộ target hiện hành không có ground truth. Metric local chỉ được tính trên
   holdout xác định từ ảnh train và không phải điểm BTC.
+
+### Kết quả chính thức đầu tiên và chẩn đoán
+
+| Nguồn | PSNR | SSIM | LPIPS | Score thang 100 |
+| --- | ---: | ---: | ---: | ---: |
+| BTC, classic full 30k | 24.27611 | 0.793611 | 0.207350 | 70.080000 |
+| Holdout classic 10k | 23.717375 | 0.788390 | 0.208097 | 69.558252 |
+| Holdout antialiased 10k | 23.757842 | 0.783074 | 0.217991 | 69.027295 |
+
+BTC nhận đủ 7/7 scene và metric chính thức gần holdout classic. Với duy nhất một
+lần nộp, đây là bằng chứng chống lại lỗi format/camera nghiêm trọng, không phải
+chứng minh mọi chi tiết camera đã tối ưu. Khoảng cải thiện hiện tại phải tập
+trung vào chất lượng tái tạo:
+
+- `antialiased` toàn bộ dataset thua classic `0.530957` điểm local: PSNR chỉ tăng
+  khoảng `0.0405 dB`, trong khi SSIM và LPIPS cùng xấu đi.
+- `chair` yếu nhất trên holdout classic (`65.112882` điểm scene, LPIPS
+  `0.271775`), nhưng BTC không trả metric từng scene nên không được quy kết
+  `chair` là nguyên nhân chính thức.
+- `bonsai` là tín hiệu ngoại lệ: antialiased hơn classic khoảng `0.2544` điểm
+  riêng scene ở 10k, tương đương dự báo chỉ khoảng `0.0363` điểm toàn bài do
+  trung bình đều 7 scene. Tín hiệu nhỏ này phải được xác nhận lại cùng seed ở
+  iteration thắng trước khi tạo candidate.
+- Độ nhạy của công thức: tăng `1 dB` PSNR thêm khoảng `0.6` điểm; tăng `0.01`
+  SSIM thêm `0.3` điểm; giảm `0.01` LPIPS thêm `0.4` điểm.
+
+Bước kế tiếp là hiệu chuẩn classic holdout ở 30k, chỉ đổi iterations so với 10k.
+Calibration không được tạo hoặc thay `submission.zip`. Protocol đầy đủ nằm trong
+`docs/gpu-vm.md`.
 
 ## Quy định dữ liệu và tái lập
 
@@ -76,5 +108,6 @@ Nguồn kỹ thuật chính thức dùng cho quyết định vận hành:
 - [CUDA 11.8 release notes](https://docs.nvidia.com/cuda/archive/11.8.0/cuda-toolkit-release-notes/).
 - [Nerfstudio installation guide](https://docs.nerf.studio/quickstart/installation.html)
   và [release v1.1.5](https://github.com/nerfstudio-project/nerfstudio/releases/tag/v1.1.5).
-- [GitHub repository visibility](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/managing-repository-settings/setting-repository-visibility)
-  và [deploy keys](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/managing-deploy-keys).
+- [GitHub repository visibility](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/managing-repository-settings/setting-repository-visibility).
+  Repo hiện hành là public để VM clone read-only qua HTTPS mà không cần secret;
+  raw input, yêu cầu BTC, output, checkpoint và ZIP vẫn bị loại khỏi Git.
