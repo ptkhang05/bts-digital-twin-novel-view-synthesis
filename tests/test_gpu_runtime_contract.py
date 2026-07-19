@@ -17,3 +17,14 @@ def test_gpu_scripts_export_the_host_identity() -> None:
         script = (ROOT / "infra" / "gpu" / script_name).read_text()
         assert 'export HOST_UID="$(id -u)"' in script
         assert 'export HOST_GID="$(id -g)"' in script
+
+
+def test_gpu_image_preloads_torch_weights_for_non_root_users() -> None:
+    dockerfile = (ROOT / "infra" / "gpu" / "Dockerfile").read_text()
+
+    env_position = dockerfile.index("ENV HOME=/tmp")
+    preload_position = dockerfile.index("lpips.LPIPS(net='alex')")
+
+    assert env_position < preload_position
+    assert "TORCH_HOME=/opt/bts-nvs/torch-cache" in dockerfile
+    assert "chmod -R a+rX /opt/bts-nvs/torch-cache" in dockerfile
