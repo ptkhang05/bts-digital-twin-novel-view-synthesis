@@ -73,9 +73,13 @@ trung vào chất lượng tái tạo:
 - Độ nhạy của công thức: tăng `1 dB` PSNR thêm khoảng `0.6` điểm; tăng `0.01`
   SSIM thêm `0.3` điểm; giảm `0.01` LPIPS thêm `0.4` điểm.
 
-Bước kế tiếp là hiệu chuẩn classic holdout ở 30k, chỉ đổi iterations so với 10k.
-Calibration không được tạo hoặc thay `submission.zip`. Protocol đầy đủ nằm trong
-`docs/gpu-vm.md`.
+Hiệu chuẩn 30k sau đó cho thấy screening 10k có thể đảo chiều ở 30k; vì vậy 10k
+chỉ dùng để loại nhanh. Baseline hiện hành vẫn là `splatfacto-big` classic 30k.
+Preset Nerfstudio 1.1.5 này override model base defaults thành cull alpha `0.005`
+và densify grad `0.0005`; scheduler means kết thúc ở 30.000 step. Không đề xuất
+40k chỉ bằng cách tăng `max-num-iterations` mà chưa thiết kế lại scheduler.
+Các kết quả sau sự cố workspace và giới hạn provenance nằm tại
+`docs/recovery-2026-07-20.md`.
 
 ## Quy định dữ liệu và tái lập
 
@@ -86,7 +90,7 @@ Calibration không được tạo hoặc thay `submission.zip`. Protocol đầy 
 
 ## Đối chiếu liên kết và mâu thuẫn
 
-- Dataset hiện hành: [Google Drive của BTC](https://drive.google.com/file/d/1b9F4B1tDVX8bIX4fZxsP9bduRynDUN_a/view?usp=sharing).
+- Dataset hiện hành đã audit thành công: [Google Drive của BTC](https://drive.google.com/file/d/1jQ-SYjLJ42UGY2O574j437NvUxFSEF4l/view?usp=sharing).
 - [LPIPS](https://arxiv.org/abs/1801.03924), [SSIM DOI](https://doi.org/10.1109/TIP.2003.819861)
   và [3D Gaussian Splatting baseline](https://github.com/graphdeco-inria/gaussian-splatting)
   truy cập được khi kiểm tra.
