@@ -1,0 +1,36 @@
+{
+  "manifest_version": 1,
+  "source_root": "Yeu_cau_BTC_BTS_markdown",
+  "recorded_on": "2026-07-20",
+  "digest_algorithm": "sha256(path\\0size\\0sha256\\n), sorted by POSIX path",
+  "overall_sha256": "4a5ec5e93ffc0ef7a8dba3815bd5bfea266c16184ea6e592d6d7a261f76b08a8",
+  "file_count": 2,
+  "total_bytes": 14489,
+  "source_archive": {
+    "path": "Yêu cầu BTC BTS - Markdown.zip",
+    "size": 6072,
+    "sha256": "09fa39f08dac690149810be564de82587f454cd4e6817dcc009d5a6b3e789d67",
+    "crc_check": "pass",
+    "duplicate_members": 0,
+    "unsafe_members": 0
+  },
+  "files": [
+    {
+      "path": "Yêu cầu BTC BTS 1.md",
+      "size": 10122,
+      "sha256": "4150c700612f01ad9b5b4e35271ede30501151e23f0931ba65adaeff426a0aa0"
+    },
+    {
+      "path": "Yêu cầu BTC BTS 2.md",
+      "size": 4367,
+      "sha256": "4f3b5e37b9e001ca022f22b85b09ad97e544fff4d34b79a37ce9d03ff2405707"
+    }
+  ],
+  "missing_local_image_assets": [
+    "Yêu cầu BTC BTS 1_files/viettel-logo.png",
+    "Yêu cầu BTC BTS 1_files/airace-logo.png",
+    "Yêu cầu BTC BTS 1_files/var-2026.jpg",
+    "Yêu cầu BTC BTS 2_files/viettel-logo.png",
+    "Yêu cầu BTC BTS 2_files/airace-logo.png"
+  ]
+}

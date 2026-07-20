@@ -1,6 +1,6 @@
 # Đặc tả vận hành BTC hiện hành
 
-Ngày đối chiếu: 2026-07-19 (Asia/Ho_Chi_Minh).
+Ngày đối chiếu: 2026-07-20 (Asia/Ho_Chi_Minh).
 
 Tài liệu này là bản dẫn xuất có thể commit. Hai file yêu cầu gốc của BTC và dữ
 liệu ảnh được giữ local, không đưa lên Git. Khi văn bản mô tả và dữ liệu thực tế
@@ -9,6 +9,12 @@ mâu thuẫn, pipeline dùng thứ tự ưu tiên sau:
 1. `test/test_poses.csv` của scene hiện hành cho tên ảnh, kích thước và số target.
 2. COLMAP `cameras.bin`/`images.bin` cho camera model, distortion và pose.
 3. Văn bản BTC cho công thức chấm, format ZIP và quy định cuộc thi.
+
+Bản raw hiện hành được nhận trong `Yêu cầu BTC BTS - Markdown.zip` và đối chiếu
+bằng `manifests/btc_requirements_2026-07-20.json`. Manifest ngày 16/07 được giữ
+lại như provenance lịch sử. Hai Markdown ngày 20/07 khác hash, dài hơn và bản
+hiện có chứa nội dung giao diện/timeline; do blob cũ đã mất nên không thể khẳng
+định mọi khác biệt nội dung bằng một phép diff byte-for-byte.
 
 ## Dataset hiện hành
 
@@ -38,6 +44,16 @@ center trong world space.
 
 - Nộp đúng một `submission.zip`, chứa trực tiếp `scene_id/image_name`.
 - Phải đủ và chỉ đủ 7 scene/386 ảnh RGB JPEG, đúng tên, case và kích thước.
+- Cây thư mục `.png` trong văn bản BTC là ví dụ minh họa. Quy định đồng thời yêu
+  cầu tên file theo `image_name`; vì Round2 dùng `.jpg`/`.JPG`, giữ chính xác tên
+  và encoding JPEG là cách diễn giải nhất quán với dữ liệu thật và đã được cổng
+  BTC chấm đủ 7/7 scene.
+- Bảng “Dung lượng 200–300 MB” nằm trong mục **Dữ liệu vòng 1**, không phải mục
+  yêu cầu submission. Snapshot này không công bố giới hạn byte cho ZIP; không
+  được tự ép submission vào khoảng 200–300 MB.
+- Snapshot vòng 1 ghi giới hạn 5 lần nộp/ngày, thời gian chờ 600 giây, deadline
+  30/07/2026 và hệ thống lấy bản nộp cuối trước deadline. Đây là trạng thái chụp
+  ngày 20/07/2026; cần xác minh lại trên cổng BTC trước mỗi lần nộp vì có thể đổi.
 - BTC công bố `0.4*(1-LPIPS) + 0.3*SSIM + 0.3*PSNR_norm`, trong đó
   `PSNR_norm=clamp(PSNR/PSNR_max,0,1)` và điểm cuối là trung bình đều theo scene.
 - Văn bản BTC chưa công bố giá trị `PSNR_max`. Kết quả chính thức đầu tiên
@@ -91,11 +107,15 @@ Các kết quả sau sự cố workspace và giới hạn provenance nằm tại
 ## Đối chiếu liên kết và mâu thuẫn
 
 - Dataset hiện hành đã audit thành công: [Google Drive của BTC](https://drive.google.com/file/d/1jQ-SYjLJ42UGY2O574j437NvUxFSEF4l/view?usp=sharing).
+- Snapshot BTC mới còn liên kết một public set khác qua Drive ID
+  `1b9F4B1tDVX8bIX4fZxsP9bduRynDUN_a`. Không thay Round2 bằng archive này nếu
+  chưa có chỉ thị vòng mới và chưa audit manifest.
 - [LPIPS](https://arxiv.org/abs/1801.03924), [SSIM DOI](https://doi.org/10.1109/TIP.2003.819861)
   và [3D Gaussian Splatting baseline](https://github.com/graphdeco-inria/gaussian-splatting)
   truy cập được khi kiểm tra.
-- Hai logo BTC trả về PNG; `https://competition.viettel.vn/var-2026.jpg` trả về
-  HTML nên không được xem là asset ảnh hợp lệ.
+- ZIP Markdown không chứa năm asset local được tham chiếu: hai logo cho mỗi
+  trang và `var-2026.jpg`. Chúng chỉ là asset giao diện, không phải input mô hình;
+  manifest ghi rõ là thiếu để không nhầm rằng đã kiểm tra được nội dung ảnh.
 - Trang cuộc thi là ứng dụng web và không cung cấp đầy đủ nội dung khi truy cập
   ẩn danh; các endpoint submission/leaderboard cần phiên đăng nhập của người dùng.
 - Văn bản vòng ghi `test_pose.csv`, nhưng file thật là `test_poses.csv`; pipeline
