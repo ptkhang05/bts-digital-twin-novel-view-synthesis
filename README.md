@@ -9,6 +9,8 @@ Nguồn vận hành chuẩn là [đặc tả BTC hiện hành](docs/current-btc-
 sách dữ liệu, Git và artifact được ghi tại
 [ADR-001](docs/decisions/001-round2-artifact-policy.md) và quyết định visibility
 hiện hành tại [ADR-002](docs/decisions/002-public-repository.md).
+Trạng thái phục hồi sau sự cố ổ D được ghi tại
+[báo cáo recovery 2026-07-20](docs/recovery-2026-07-20.md).
 
 ## Nền tảng hỗ trợ
 
@@ -144,6 +146,11 @@ python -m bts_nvs.render --checkpoint <config.yml> --targets <target_cameras.jso
 - `quality`: `splatfacto-big`, rasterization `classic`.
 - `quality-aa`: cùng cấu hình nhưng `antialiased`.
 - `fast`: smoke kỹ thuật 500 iteration, không dùng làm candidate cuối.
+
+Nerfstudio 1.1.5 `splatfacto-big` được tune cho 30.000 iteration và override
+model base defaults thành `cull_alpha_thresh=0.005`,
+`densify_grad_thresh=0.0005`. Scheduler của means cũng kết thúc ở 30.000 step;
+không chỉ tăng `max-num-iterations` vượt 30k mà không thiết kế lại scheduler.
 
 Pose normalization mặc định bị tắt để giữ COLMAP frame. Chỉ dùng
 `--debug-allow-pose-normalization` cho debug có chủ ý. `--distortion auto` dùng
